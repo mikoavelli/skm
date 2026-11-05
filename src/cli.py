@@ -3,8 +3,10 @@
   python3 -m skmapp.cli probe        # discovery + handshake + status
   python3 -m skmapp.cli speaker on|off
   python3 -m skmapp.cli sample       # 'J' 12-bit probe reads
-  python3 -m skmapp.cli gen 1000     # 'H' generator demo
+  python3 -m skmapp.cli gen 1000     # 'H' generator demo (retunes the scene)
   python3 -m skmapp.cli measure      # capture + spectrum, print bands
+  python3 -m skmapp.cli sweep        # retune generator + capture across a
+                                     # frequency ladder, then СТОП -> noise
 """
 from __future__ import annotations
 
@@ -47,9 +49,11 @@ def cmd_sample(dev: SkmDevice) -> int:
 
 def cmd_gen(dev: SkmDevice, freq: int) -> int:
     # div approximation: stream_fs/frequency guard-wrapped (RE: FUN_0058aadc)
-    div = max(1, int(Simulator.stream_fs / freq))
+    div = max(1, round(Simulator.stream_fs / freq))
     ok = dev.set_generator(p2=1, p1=2, div=div, p7=3, p6=4, p5=5, div2=div)
-    print(f"H frame sent ({'ok' if ok else 'no reply'}), div={div}")
+    actual = Simulator.stream_fs / div
+    print(f"H frame sent ({'ok' if ok else 'no reply'}), div={div}, "
+          f"scene tone now {actual:.1f} Hz")
     return 0
 
 
@@ -60,6 +64,23 @@ def cmd_measure(dev: SkmDevice, fs: float) -> int:
           f"@ {sp.db.max():.1f} dB")
     for f in (100, 500, 1000, 2000, 5000, 10000):
         print(f"  band {f:6d} Hz: {sp.band_db(f):7.1f} dB")
+    return 0
+
+
+def cmd_sweep(dev: SkmDevice, fs: float) -> int:
+    """Demo the full pipeline: retune the generator, capture, report peak."""
+    dev.handshake()
+    for freq in (200, 500, 1000, 2000, 4000, 8000):
+        div = max(1, round(fs / freq))
+        dev.set_generator(p2=1, p1=2, div=div, p7=3, p6=4, p5=5, div2=div)
+        sp = dev.meas.spectrum(fs=fs)
+        peak = float(sp.freqs[int(np.argmax(sp.lin))])
+        print(f"gen {freq:5d} Hz -> captured peak {peak:8.1f} Hz "
+              f"@ {sp.db.max():6.1f} dB")
+    dev.set_generator(p2=0, p1=0, div=1, p7=0, p6=0, p5=0, div2=1)
+    sp = dev.meas.spectrum(fs=fs)
+    print(f"gen STOP         -> captured peak {sp.db.max():6.1f} dB (noise)"
+          f" at {float(sp.freqs[int(np.argmax(sp.lin))]):8.1f} Hz")
     return 0
 
 
@@ -80,6 +101,8 @@ def main(argv: list[str]) -> int:
             return cmd_gen(dev, int(argv[1]))
         if cmd == "measure":
             return cmd_measure(dev, fs=51200.0)
+        if cmd == "sweep":
+            return cmd_sweep(dev, fs=51200.0)
         print(f"unknown command {cmd!r}", file=sys.stderr)
         return 2
     finally:
