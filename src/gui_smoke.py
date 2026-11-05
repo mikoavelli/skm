@@ -12,6 +12,17 @@ from PySide6.QtWidgets import QApplication
 from gui import MainWindow
 
 
+def _wait_label(app: QApplication, win, text: str, s: float) -> bool:
+    """Pump events until the FREQ label shows `text` (or timeout)."""
+    deadline = time.monotonic() + s
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if win.lb_freq.text() == text:
+            return True
+        time.sleep(0.02)
+    return False
+
+
 def main() -> int:
     out = sys.argv[1] if len(sys.argv) > 1 else \
         f"{tempfile.gettempdir()}/skm_gui.png"
@@ -28,21 +39,24 @@ def main() -> int:
         time.sleep(0.02)
 
     win.thread.request_measure()
-    deadline = time.monotonic() + 8.0
-    while time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(0.02)
-        if win.lb_freq.text() != "0 Гц":
-            break
+    if not _wait_label(app, win, "1000 Гц", 10.0):
+        print("FAIL: no 1000 Hz peak after first measure", file=sys.stderr)
+        return 1
 
     # exercise a couple of controls so state is visible
-    win.on_gen_on()
     win.btn_ch_y.setChecked(True)
     win.on_channels()
-    end = time.monotonic() + 0.5
-    while time.monotonic() < end:
-        app.processEvents()
-        time.sleep(0.02)
+
+    # scene retune through the generator: 'H' rewrites the 'N' stream, the
+    # next capture must peak at the new exact-division frequency. 5120 Hz
+    # = stream_fs / 10 -> integer divider, no quantization error.
+    win.sp_gen.setValue(5120)
+    win.on_gen_on()
+    if not _wait_label(app, win, "5120 Гц", 15.0):
+        print("FAIL: generator did not retune the scene to 5120 Hz",
+              file=sys.stderr)
+        return 1
+    win.on_gen_stop()
 
     pix = win.grab()
     pix.save(out)

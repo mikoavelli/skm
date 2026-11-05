@@ -366,11 +366,13 @@ class MainWindow(QMainWindow):
 
     def on_gen_on(self) -> None:
         freq = self.sp_gen.value()
-        div = max(1, int(self.thread.fs / freq))
+        div = max(1, round(self.thread.fs / freq))
         self.cmd("gen", lambda d: d.set_generator(1, 2, div, 3, 4, 5, div))
+        self.thread.request_measure()   # the scene changed: refresh the view
 
     def on_gen_stop(self) -> None:
         self.cmd("gen_stop", lambda d: d.set_generator(0, 0, 1, 0, 0, 0, 1))
+        self.thread.request_measure()   # show the silence/noise floor
 
     def on_auto(self, on: bool) -> None:
         self.thread.streaming = on

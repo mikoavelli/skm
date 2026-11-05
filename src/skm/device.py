@@ -164,8 +164,10 @@ class SkmDevice:
     # -- measurement ----------------------------------------------------
     def measure_bytes(self, wrap: int = 0x10000, idle_limit: int = 100,
                       idle_ms: float = 2.0) -> bytes:
-        """FUN_00589aec: 'N' -> capture byte stream until `wrap` samples
-        OR `idle_limit` consecutive empty polls; then 'S'."""
+        """FUN_00589aec: drain-check keeps the bus clean, 'N' -> capture
+        byte stream until `wrap` samples OR `idle_limit` consecutive
+        empty polls; then 'S'."""
+        self.p.drain()
         self.p.send(bytes([ord(CMD_MEASURE_START)]))
         acc = bytearray()
         idle = 0
