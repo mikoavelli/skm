@@ -31,6 +31,29 @@ Evidence: the reverse-engineering base lives in the sibling `CKM2PO` project
 repo — `analysis/meas/defns/FUN_*.c` (5858 decompiled bodies) and the "SKM
 protocol total layer — extracted" section in `analysis/notes.md`.
 
+## Simulated data stream (no hardware needed)
+
+The byte stream behind the `'N'` measurement is generated synthetically by
+`src/skm/simulator.py` so the whole pipeline — transport, capture, FFT,
+GUI plots — runs against a known scene:
+
+- scene = sine test tone (`tone_freq`, `tone_amp`) on a Gaussian noise floor
+  (`noise_sigma`); the AWG'ish "world" lives entirely in the simulator;
+- the `'H'` generator command retunes the scene (demo interpretation of the
+  unresolved RE fields: `p2==0` = СТОП silences the tone, otherwise the first
+  divider word sets the tone as `stream_fs / div`, mirroring the guard
+  encoding of `device.set_generator`). So in the GUI: ВКЛ (H) 5120 → next
+  capture peaks at 5120 Hz; СТОП → the tone disappears, noise floor remains;
+- direct scene control for tests: `Simulator.set_scene(freq=…, amp=…, noise=…)`;
+- `uv run python src/cli.py sweep` walks the scene 200…8000 Hz through the
+  full protocol (`'H'` → `'N'`/`'S'` → FFT) and prints captured peaks;
+- GUI auto-measure (`Авто-замер`) re-captures at a settable interval, which
+  makes spectrum/oscillogram readouts live.
+
+Quantization note: the divider is an integer, so e.g. «4000 Гц» produces
+`51200/13 ≈ 3938 Hz` — a physically faithful artifact of the RE'd divider
+scheme, not a bug.
+
 ## Build / run
 
 ```sh
