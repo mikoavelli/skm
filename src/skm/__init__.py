@@ -1,4 +1,4 @@
-"""SKM-2ПО device link core (reverse-engineered from CKM2PO.exe)."""
+"""SKM-2PO device link core (reverse-engineered from CKM2PO.exe)."""
 
 from .constants import BAUD, DEVICE_DESCRIPTIONS, DEVICE_SERIAL, SENTINEL
 from .device import DeviceError, SkmDevice

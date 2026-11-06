@@ -1,4 +1,4 @@
-"""Точка входа: измерительный экран СКМ (standalone)."""
+"""Entry point: the SKM measurement screen (standalone GUI)."""
 from __future__ import annotations
 
 from gui import main

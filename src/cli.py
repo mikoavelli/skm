@@ -6,7 +6,7 @@
   python3 -m skmapp.cli gen 1000     # 'H' generator demo (retunes the scene)
   python3 -m skmapp.cli measure      # capture + spectrum, print bands
   python3 -m skmapp.cli sweep        # retune generator + capture across a
-                                     # frequency ladder, then СТОП -> noise
+                                     # frequency ladder, then STOP -> noise
 """
 from __future__ import annotations
 

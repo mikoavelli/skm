@@ -1,9 +1,9 @@
-# skm — СКМ-2ПО communication/measurement mechanism (standalone app)
+# skm — SKM-2PO communication/measurement mechanism (standalone app)
 
 A standalone application that replicates the communication and measurement
-mechanism of СКМ devices, extracted by reverse engineering the СКМ2ПО
-(`CKM2PO.exe`) binary. Python core package + PySide6 GUI; works without real
-hardware via a byte-level SKM-23 simulator built from the RE'd protocol.
+mechanism of SKM devices, extracted by reverse engineering the CKM2PO.exe
+binary. Python core package + PySide6 GUI; works without real hardware via
+a byte-level SKM-23 simulator built from the RE'd protocol.
 
 Package layout (uv, `src/`):
 
@@ -11,7 +11,7 @@ Package layout (uv, `src/`):
   counts) with the Ghidra evidence references,
 - `src/skm/transport.py` — byte transport ABC + FTDI D2XX transport (ctypes,
   for the Win10 VM / real hardware) + loopback transport for tests,
-- `src/skm/simulator.py` — byte-level fake СКМ device (CKM-23 behaviour RE'd
+- `src/skm/simulator.py` — byte-level fake SKM device (CKM-23 behaviour RE'd
   from CKM2PO.exe; faithful reply shapes + measurement stream),
 - `src/skm/protocol.py` — low-level exchange helpers mirroring the app's
   drain/send/sleep/accumulate-receive pattern (TX buffer DAT_0059e764,
@@ -22,7 +22,7 @@ Package layout (uv, `src/`):
 - `src/skm/measurement.py` — stream capture → 65536-point spectrum (numpy
   FFT) mirroring FUN_00589aec post-processing,
 - `src/main.py` / `src/gui.py` — the measurement GUI (spectrum +
-  oscillogram + ЧАСТОТА/УРОВЕНЬ readouts), all device I/O in a QThread,
+  oscillogram + FREQUENCY/LEVEL readouts), all device I/O in a QThread,
 - `src/cli.py` — probe/speaker/sample/gen/measure CLI commands,
 - `src/gui_smoke.py` — headless smoke test (connect → measure → PNG grabs),
 - `SKM.spec` — PyInstaller build (Qt module/plugin pruning, numpy kept).
@@ -40,17 +40,33 @@ GUI plots — runs against a known scene:
 - scene = sine test tone (`tone_freq`, `tone_amp`) on a Gaussian noise floor
   (`noise_sigma`); the AWG'ish "world" lives entirely in the simulator;
 - the `'H'` generator command retunes the scene (demo interpretation of the
-  unresolved RE fields: `p2==0` = СТОП silences the tone, otherwise the first
+  unresolved RE fields: `p2==0` = STOP silences the tone, otherwise the first
   divider word sets the tone as `stream_fs / div`, mirroring the guard
-  encoding of `device.set_generator`). So in the GUI: ВКЛ (H) 5120 → next
-  capture peaks at 5120 Hz; СТОП → the tone disappears, noise floor remains;
+  encoding of `device.set_generator`). So in the GUI: ON (H) 5120 -> next
+  capture peaks at 5120 Hz; STOP -> the tone disappears, noise floor remains;
 - direct scene control for tests: `Simulator.set_scene(freq=…, amp=…, noise=…)`;
 - `uv run python src/cli.py sweep` walks the scene 200…8000 Hz through the
   full protocol (`'H'` → `'N'`/`'S'` → FFT) and prints captured peaks;
-- GUI auto-measure (`Авто-замер`) re-captures at a settable interval, which
+- GUI auto-measure (`Auto-measure`) re-captures at a settable interval, which
   makes spectrum/oscillogram readouts live.
 
-Quantization note: the divider is an integer, so e.g. «4000 Гц» produces
+## Precomputed-spectrum file input
+
+A third connection kind, "Files (test data)", duplicates the input of the
+signal-processor project: it loads its two ready-made spectra
+(`noise.txt` = pure noise U_n, `signal_noise.txt` = signal + noise U_sn;
+1 Hz grid, voltage level) and renders them through the same visualization
+path as a device capture.
+
+- Directory resolution: `SKM_TEST_DATA_DIR` env override, then the sibling
+  repo layout (`../signal-processor/test_data`).
+- Two display modes via the "File input mode" radio group: Noise (U_n) /
+  Signal + noise (U_sn); switching re-renders instantly.
+- Levels are shown as 20*log10(V) (dB re 1 V); the frequency axis widens to
+  the full file span (32000 Hz); the oscillogram tab is disabled since the
+  files contain no time-domain data.
+
+Quantization note: the divider is an integer, so e.g. "4000 Hz" produces
 `51200/13 ≈ 3938 Hz` — a physically faithful artifact of the RE'd divider
 scheme, not a bug.
 
@@ -65,5 +81,5 @@ uv run --group build pyinstaller SKM.spec   # single-file dist/SKM
 SKM_ONEDIR=1 uv run --group build pyinstaller SKM.spec --noconfirm  # dist/SKM/ dir
 ```
 
-Real СКМ hardware: Windows + `ftd2xx.dll` in PATH, connect via «FTDI: CKM 23v1»
+Real SKM hardware: Windows + `ftd2xx.dll` in PATH, connect via "FTDI: CKM 23v1"
 in the GUI (D2XX discovery by description, as FUN_00570b84 does).

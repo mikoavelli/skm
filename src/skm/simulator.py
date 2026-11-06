@@ -67,7 +67,7 @@ class Simulator:
         self.tone_amp = tone_amp    # dev counts (8-bit), amplitude
         self.noise_sigma = noise_sigma  # Gaussian noise floor, dev counts
         # -- protocol state ------------------------------------------------
-        self.gain_ch = [0, 0]       # R0..R2 / Р1..2 state per channel (X=0,Y=1)
+        self.gain_ch = [0, 0]       # R0..R2 / P1..2 state per channel (X=0,Y=1)
         self.speaker = 0            # 'U'/'V'
         self.source = 0             # 'I'..'E'  (0..4)
         self.mode = 0               # 'M'..'E' separate 5-state group
@@ -187,7 +187,7 @@ class Simulator:
         if len(payload) < 5:
             return
         p2 = payload[0]
-        if p2 == 0:                                 # СТОП: silence the tone
+        if p2 == 0:                                 # STOP: silence the tone
             self.generator = False
             self.set_scene(amp=0.0)
             return
