@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from skm import D2XXTransport, PairTransport, Simulator, SkmDevice, Spectrum
+from skm import D2XXTransport, PairTransport, Simulator, SkmDevice, Spectrum, toneplayer
 from skm.measurement import Spectrum as _Spectrum  # same class, for typing
 from skm.spectra import SpectrumFile
 
@@ -68,6 +68,7 @@ class LinkThread(QThread):
     state_changed = Signal(str)
     result_ready = Signal(object)          # MeasurementResult
     connection_changed = Signal(str)       # "" | "sim" | "d2xx" | "files"
+    task_done = Signal(str, str)           # side-task name, message (""|ERR)
 
     def __init__(self) -> None:
         super().__init__()
@@ -83,6 +84,11 @@ class LinkThread(QThread):
     # called from the UI thread ----------------------------------------
     def submit(self, name: str, fn) -> None:
         self._queue.append(("cmd", (name, fn)))
+
+    def post(self, name: str, fn) -> None:
+        """Queue a side task that does NOT require a device connection
+        (e.g. TonePlayer stubs); runs on the worker, reports via task_done."""
+        self._queue.append(("task", (name, fn)))
 
     def connect_simulator(self) -> None:
         self._queue.append(("connect", ("sim", "")))
@@ -130,8 +136,13 @@ class LinkThread(QThread):
                         self._disconnect()
                     elif kind == "cmd" and self.dev is not None:
                         arg[1](self.dev)
+                    elif kind == "task":
+                        self.task_done.emit(arg[0], str(arg[1]()))
                 except Exception as exc:                    # noqa: BLE001
-                    self.state_changed.emit(f"Error: {exc}")
+                    if kind == "task":
+                        self.task_done.emit(arg[0], f"ERR: {exc}")
+                    else:
+                        self.state_changed.emit(f"Error: {exc}")
             if self._input_ready() and (self.streaming or self.oneshot):
                 now = time.monotonic()
                 if self.oneshot or self.streaming and now >= next_t:
@@ -226,6 +237,7 @@ class MainWindow(QMainWindow):
         self.thread.state_changed.connect(self.on_state)
         self.thread.result_ready.connect(self.on_result)
         self.thread.connection_changed.connect(self.on_connection)
+        self.thread.task_done.connect(self.on_task)
         self.thread.start()
 
         central = QWidget()
@@ -323,6 +335,20 @@ class MainWindow(QMainWindow):
         self.btn_once.clicked.connect(self.thread.request_measure)
         meas_l.addWidget(self.btn_once)
         left.addWidget(meas)
+
+        # TonePlayer stubs: launch the companion app and drive its remote
+        # "msg" calls; in the future these actions move natively into SKM.
+        tp = QGroupBox("TonePlayer (stub)")
+        tp_l = QVBoxLayout(tp)
+        self.btn_tp_open = QPushButton("Open TonePlayer")
+        self.btn_tp_open.clicked.connect(self.on_tp_open)
+        tp_l.addWidget(self.btn_tp_open)
+        self.btn_tp_play = QPushButton("Play frequencies")
+        self.btn_tp_play.setCheckable(True)
+        self.btn_tp_play.toggled.connect(self.on_tp_play)
+        tp_l.addWidget(self.btn_tp_play)
+        self.grp_tp = tp
+        left.addWidget(tp)
 
         # file-input display modes (active only in the Files connection)
         fm = QGroupBox("File input mode")
@@ -460,6 +486,24 @@ class MainWindow(QMainWindow):
     def on_gen_stop(self) -> None:
         self.cmd("gen_stop", lambda d: d.set_generator(0, 0, 1, 0, 0, 0, 1))
         self.thread.request_measure()   # show the silence/noise floor
+
+    # ------------------------------------------------ TonePlayer stubs
+    def on_tp_open(self) -> None:
+        self.thread.post("tone-player open", toneplayer.launch)
+
+    def on_tp_play(self, on: bool) -> None:
+        self.btn_tp_play.setText("Stop playback" if on else "Play frequencies")
+        self.thread.post(
+            f"tone-player {'play' if on else 'stop'}",
+            lambda: toneplayer.call("play" if on else "stop"))
+
+    @Slot(str, str)
+    def on_task(self, name: str, message: str) -> None:
+        if message.startswith("ERR:"):
+            self.statusBar().showMessage(f"{name}: {message[4:].strip()}",
+                                         6000)
+        else:
+            self.statusBar().showMessage(f"{name}: {message or 'ok'}", 4000)
 
     def on_auto(self, on: bool) -> None:
         self.thread.streaming = on

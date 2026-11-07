@@ -50,6 +50,23 @@ GUI plots — runs against a known scene:
 - GUI auto-measure (`Auto-measure`) re-captures at a settable interval, which
   makes spectrum/oscillogram readouts live.
 
+## TonePlayer integration (stub)
+
+Two stub buttons in the "TonePlayer (stub)" panel drive the companion
+tone-generator app (../tone-player); eventually these actions will be
+implemented natively inside SKM.
+
+- "Open TonePlayer" launches the TonePlayer executable. Its
+  `settings.json` MUST sit next to the executable (TonePlayer is started
+  from the same folder as SKM in the deployed layout; in dev the sibling
+  repository `../tone-player/dist/` is used).
+- "Play frequencies" / "Stop playback" toggles playback via the remote
+  `msg` CLI channel: the TonePlayer binary supports `TonePlayer msg play`,
+  `msg stop`, `msg status`, etc. — one JSON-line reply from the running
+  instance. Errors (e.g. TonePlayer not running) surface in the status bar.
+- Path resolution order: `SKM_TONE_PLAYER` env override, then the
+  executable next to the frozen SKM app, then the dev sibling repo.
+
 ## Precomputed-spectrum file input
 
 A third connection kind, "Files (test data)", duplicates the input of the

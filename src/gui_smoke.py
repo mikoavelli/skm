@@ -14,6 +14,7 @@ import numpy as np
 from PySide6.QtWidgets import QApplication
 
 from gui import MainWindow
+from skm import toneplayer
 
 
 def _wait_label(app: QApplication, win: MainWindow, text: str,
@@ -33,6 +34,18 @@ def _expected_label(app: QApplication, win: MainWindow, kind: str) -> str:
     sf = win.thread.files[kind]
     i = int(np.argmax(sf.volts))
     return f"{sf.freqs_hz[i]:.0f} Hz"
+
+
+def _wait_status(app: QApplication, win: MainWindow, prefix: str,
+                 seconds: float) -> bool:
+    """Pump events until the status bar message starts with `prefix`."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if win.statusBar().currentMessage().startswith(prefix):
+            return True
+        time.sleep(0.02)
+    return False
 
 
 def main() -> int:
@@ -97,6 +110,20 @@ def main() -> int:
     sn_level = win.lb_level.text()
     print(f"noise mode level: {noise_level}, signal+noise level: {sn_level}")
     win.rb_noise.setChecked(True)
+
+    # 3) TonePlayer stubs: layout + msg-channel error surfaced in status bar
+    exe = toneplayer.find_exe()
+    toneplayer.settings_path(exe)   # settings.json must sit next to it
+    print("tone-player exe:", exe)
+    win.btn_tp_play.setChecked(True)          # becomes "Stop playback"
+    if not _wait_status(app, win, "tone-player play", 60.0):
+        print("FAIL: TonePlayer msg error not shown in the status bar",
+              file=sys.stderr)
+        return 1
+    print("tone-player status:", win.statusBar().currentMessage())
+    win.btn_tp_play.blockSignals(True)
+    win.btn_tp_play.setChecked(False)         # do not fire another msg call
+    win.btn_tp_play.blockSignals(False)
 
     print("state:", win.lbl_state.text())
     win.thread.stop()
