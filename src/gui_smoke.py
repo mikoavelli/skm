@@ -111,18 +111,34 @@ def main() -> int:
     print(f"noise mode level: {noise_level}, signal+noise level: {sn_level}")
     win.rb_noise.setChecked(True)
 
-    # 3) TonePlayer stubs: layout + msg-channel error surfaced in status bar
-    exe = toneplayer.find_exe()
-    toneplayer.settings_path(exe)   # settings.json must sit next to it
-    print("tone-player exe:", exe)
+    # 3) TonePlayer tab: in-process engine, instant play
+    win.tabs.setCurrentIndex(2)
+    print("tone-player settings:", toneplayer.settings_path())
+    t0 = time.monotonic()
     win.btn_tp_play.setChecked(True)          # becomes "Stop playback"
-    if not _wait_status(app, win, "tone-player play", 60.0):
-        print("FAIL: TonePlayer msg error not shown in the status bar",
+    if not _wait_status(app, win, "tone-player play", 15.0):
+        print("FAIL: in-process TonePlayer play did not report", file=sys.stderr)
+        return 1
+    print(f"first play took {time.monotonic() - t0:.2f} s:",
+          win.statusBar().currentMessage())
+    deadline = time.monotonic() + 5.0         # live status label turns "playing"
+    while time.monotonic() < deadline and \
+            not win.lbl_tp.text().startswith("playing"):
+        app.processEvents()
+        time.sleep(0.05)
+    if not win.lbl_tp.text().startswith("playing"):
+        print("FAIL: engine status label did not show playing state",
               file=sys.stderr)
         return 1
-    print("tone-player status:", win.statusBar().currentMessage())
+    tp_png = out.replace(".png", "_tp.png")
+    win.grab().save(tp_png)
+    print("saved", tp_png, "| engine:", win.lbl_tp.text())
+    win.thread.post("tone-player stop", toneplayer.stop_playing)
+    if not _wait_status(app, win, "tone-player stop", 10.0):
+        print("FAIL: in-process TonePlayer stop did not report", file=sys.stderr)
+        return 1
     win.btn_tp_play.blockSignals(True)
-    win.btn_tp_play.setChecked(False)         # do not fire another msg call
+    win.btn_tp_play.setChecked(False)
     win.btn_tp_play.blockSignals(False)
 
     print("state:", win.lbl_state.text())

@@ -3,7 +3,12 @@ name = "skm"
 version = "0.1.0"
 description = "SKM-2PO measurement/communication mechanism: protocol core + measurement GUI (standalone)"
 requires-python = "==3.14.9"
-dependencies = ["numpy==2.5.4", "pyqtgraph==0.14.0", "pyside6==6.12.0"]
+dependencies = [
+    "numpy==2.5.4",
+    "pyqtgraph==0.14.0",
+    "pyside6==6.12.0",
+    "sounddevice==0.5.6",  # TonePlayer engine (in-process), same pin as tone-player
+]
 
 [dependency-groups]
 dev = ["ruff==0.17.1"]

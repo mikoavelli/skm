@@ -162,7 +162,9 @@ def wanted_binary(path: str) -> bool:
 
 a = Analysis(
     [str(SRC_DIR / "main.py")],
-    pathex=[str(SRC_DIR)],
+    # tone-player/src holds the integrated TonePlayer audio engine
+    # (top-level modules audio_engine, models, error, settings_store).
+    pathex=[str(SRC_DIR), str(ROOT_DIR.parent / "tone-player" / "src")],
     binaries=[],
     datas=[],
     hiddenimports=[
@@ -176,6 +178,11 @@ a = Analysis(
         "gui",
         "cli",
         "numpy",
+        # TonePlayer engine, imported in-process by skm.toneplayer.
+        "audio_engine",
+        "models",
+        "error",
+        "settings_store",
     ],
     hookspath=[],
     hooksconfig={},
@@ -184,8 +191,16 @@ a = Analysis(
     noarchive=False,
 )
 
+# The in-process TonePlayer engine uses sounddevice/PortAudio: pull in the
+# bundled portaudio library (sounddevice ships it in _sounddevice_data).
+from PyInstaller.utils.hooks import collect_dynamic_libs  # noqa: E402
+
+_portaudio = collect_dynamic_libs("sounddevice")
+
 dropped = len(a.binaries)
-a.binaries = TOC([entry for entry in a.binaries if wanted_binary(str(entry[0]))])
+a.binaries = TOC(
+    [entry for entry in a.binaries + _portaudio if wanted_binary(str(entry[0]))]
+)
 print(f"Dropped files: {dropped - len(a.binaries)} of {dropped}")
 
 pyz = PYZ(a.pure)

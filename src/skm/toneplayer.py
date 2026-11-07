@@ -1,116 +1,180 @@
-"""TonePlayer app integration (stub for future in-place functionality).
+"""TonePlayer playback, integrated in-process — no TonePlayer instance.
 
-TonePlayer is the companion tone-generator app (../tone-player). For now
-the SKM GUI only launches it and drives its remote-call CLI ("msg" calls);
-later the same actions will be implemented natively inside SKM.
+SKM imports the companion app's audio modules directly from
+../tone-player/src (put on sys.path here), so tone playback happens in
+the SKM process itself using TonePlayer's own engine
+(`audio_engine.TonePlayer`: sine table + RawOutputStream). The playback
+mechanism of TonePlayer is not altered: the engine, settings model and
+validation are the very same code, imported; only the UI glue lives in
+`gui.py` (a "TonePlayer" tab with play/stop and a status readout).
 
-Deployed layout assumption: the TonePlayer executable lives in the same
-folder as the SKM app, and its `settings.json` MUST sit next to it
-(TonePlayer refuses to start without it).
+Integrated code (imported from the tone-player repository, kept verbatim):
+  audio_engine.py, models.py, error.py, settings_store.py
 
-Remote calls: run the TonePlayer binary as
-    TonePlayer msg <call> [args...]
-The call is delivered over a QLocalSocket to the running instance
-(server name "tone-player"); the answer is one JSON line
-`{"ok": bool, "message": str}` on stdout, error text on stderr.
-
-Known calls (MainWindow.handle_call): autoplay, first, last, next, pause,
-play, prev, resume, select, status, stop.
+The tone bands come from TonePlayer's `settings.json`, which must sit
+next to the TonePlayer executable: in dev the sibling repository
+(../tone-player/dist/settings.json), for the frozen SKM app — next to
+the SKM executable (the "same folder" deployment). Overrides:
+SKM_TONE_PLAYER_SRC (engine source dir), SKM_TONE_SETTINGS
+(settings.json path).
 """
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 import sys
+import threading
 from pathlib import Path
 
-#: Environment override: full path to the TonePlayer executable.
-ENV_TONE_PLAYER = "SKM_TONE_PLAYER"
-#: Seconds before a hung msg call is abandoned.
-CALL_TIMEOUT_S = 20.0
+#: Engine source directory override (dir containing audio_engine.py).
+ENV_TONE_PLAYER_SRC = "SKM_TONE_PLAYER_SRC"
+#: TonePlayer settings.json path override.
+ENV_TONE_SETTINGS = "SKM_TONE_SETTINGS"
 
-_SRV_HINT = "(run TonePlayer first)"
+#: Modules imported verbatim from the tone-player repository.
+_ENGINE_MODULES = ("audio_engine", "models", "error", "settings_store")
+
+_lock = threading.Lock()
+_player: object | None = None
+_player_error: str | None = None
 
 
-def find_exe() -> Path:
-    """Locate the TonePlayer executable; raise FileNotFoundError if absent.
+# ------------------------------------------------------------ engine path
 
-    Order: SKM_TONE_PLAYER env override, then (frozen app) next to the SKM
-    executable — the deployed "same folder" layout, then the sibling dev
-    repository (../tone-player/dist/TonePlayer).
-    """
-    override = os.environ.get(ENV_TONE_PLAYER, "").strip()
+def engine_src_dir() -> Path:
+    """Directory with TonePlayer's Qt-free audio modules."""
+    override = os.environ.get(ENV_TONE_PLAYER_SRC, "").strip()
     if override:
-        candidates = [Path(override)]
+        return Path(override)
+    # toneplayer.py -> skm/ -> src/ -> <skm repo>/ -> <projects>/
+    return Path(__file__).resolve().parents[3] / "tone-player" / "src"
+
+
+def _ensure_engine_importable() -> None:
+    """Make `audio_engine` and friends importable (dev: sibling repo src).
+
+    In the frozen SKM bundle the engine modules are collected by
+    PyInstaller (see SKM.spec), and FrozenImporter resolves top-level
+    names even when this directory does not exist.
+    """
+    src = engine_src_dir()
+    if (src / "audio_engine.py").is_file():
+        if str(src) not in sys.path:
+            sys.path.insert(0, str(src))     # engine lives there and only there
+    elif not getattr(sys, "frozen", False):
+        raise FileNotFoundError(
+            f"TonePlayer engine sources not found in {src} "
+            f"(set {ENV_TONE_PLAYER_SRC})")
+
+
+# -------------------------------------------------------------- settings
+
+def settings_path() -> Path:
+    """TonePlayer's settings.json (bands, levels, master gain, output)."""
+    override = os.environ.get(ENV_TONE_SETTINGS, "").strip()
+    if override:
+        path = Path(override)
     elif getattr(sys, "frozen", False):
-        exe = Path(sys.executable).resolve().parent / "TonePlayer"
-        exe = exe.with_suffix(".exe" if os.name == "nt" else "")
-        candidates = [exe]
+        path = Path(sys.executable).resolve().parent / "settings.json"
     else:
         # toneplayer.py -> skm/ -> src/ -> <skm repo>/ -> <projects>/
-        dev = (Path(__file__).resolve().parents[3] / "tone-player" /
-               "dist" / "TonePlayer")
-        candidates = [dev]
-    for exe in candidates:
-        if exe.is_file() and os.access(exe, os.X_OK):
-            return exe
-    raise FileNotFoundError(
-        "TonePlayer executable not found"
-        f" (tried: {', '.join(str(c) for c in candidates)})")
-
-
-def settings_path(exe: Path) -> Path:
-    """Mandatory settings.json next to the TonePlayer executable."""
-    path = exe.resolve().parent / "settings.json"
+        path = (Path(__file__).resolve().parents[3] / "tone-player" /
+                "dist" / "settings.json")
     if not path.is_file():
         raise FileNotFoundError(
-            f"settings.json is required next to TonePlayer, not found: {path}")
+            f"TonePlayer settings.json is required, not found: {path}")
     return path
 
 
-def launch() -> Path:
-    """Start TonePlayer detached; returns the executable path.
+# ----------------------------------------------------------------- player
 
-    Raises FileNotFoundError if either the executable or the mandatory
-    settings.json is missing; OSError if spawning failed.
+def _make_player():
+    """Create the engine player exactly as TonePlayer's MainWindow does.
+
+    MainWindow.__init__: ToneConfig.from_settings + TonePlayer(config,
+    settings.levels, MASTER_BASE_DB + master_gain_db, level_scale) +
+    set_autoplay(autoplay). No stream_factory — real RawOutputStream.
     """
-    exe = find_exe()
-    settings_path(exe)                     # license to start
-    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    subprocess.Popen(                      # noqa: S603 -- fixed argv, no shell
-        [str(exe)], cwd=str(exe.parent),
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True, creationflags=flags)
-    return exe
+    _ensure_engine_importable()
+    # Imports happen here, after sys.path preparation (dev build).
+    from audio_engine import TonePlayer  # type: ignore[import-not-found]
+    from models import (  # type: ignore[import-not-found]
+        MASTER_BASE_DB,
+        ToneConfig,
+    )
+    from settings_store import load_settings_at_startup  # type: ignore
+
+    settings = load_settings_at_startup(settings_path())
+    player = TonePlayer(
+        ToneConfig.from_settings(settings),
+        settings.levels,
+        MASTER_BASE_DB + settings.master_gain_db,
+        level_scale=settings.level_scale,
+    )
+    player.set_autoplay(settings.autoplay)
+    return player
 
 
-def call(name: str, *args: str) -> str:
-    """Send one 'msg' call to the running TonePlayer; return its message.
+def _player_instance():
+    """The shared engine player, loaded lazily; errors are remembered."""
+    global _player, _player_error
+    with _lock:
+        if _player is None:
+            try:
+                _player = _make_player()
+                _player_error = None
+            except Exception as exc:             # noqa: BLE001
+                _player_error = str(exc)
+        return _player, _player_error
 
-    Raises RuntimeError when TonePlayer is not running or the call failed.
-    """
-    exe = find_exe()
-    argv = [str(exe), "msg", name, *map(str, args)]
-    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    try:
-        done = subprocess.run(             # noqa: S603 -- fixed argv, no shell
-            argv, cwd=str(exe.parent), capture_output=True, text=True,
-            timeout=CALL_TIMEOUT_S, creationflags=flags)
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"TonePlayer msg {name}: timed out") from exc
-    out = (done.stdout or "").strip()
-    err = (done.stderr or "").strip()
-    if done.returncode != 0:
-        raise RuntimeError(f"TonePlayer msg {name}: {err or out or _SRV_HINT}")
-    # The running instance answers with one JSON line {"ok", "message"}.
-    try:
-        data = json.loads(out.splitlines()[-1])
-        if isinstance(data, dict) and isinstance(data.get("message"), str):
-            if not data.get("ok"):
-                raise RuntimeError(f"TonePlayer msg {name}: {data['message']}")
-            return str(data["message"])
-    except (ValueError, IndexError):
-        pass
-    return out or "ok"
+
+# ------------------------------------------------------------- UI actions
+
+def start_playing() -> str:
+    """Play frequencies from the settings (band 0 first)."""
+    player, error = _player_instance()
+    if error is not None:
+        raise RuntimeError(f"TonePlayer engine unavailable: {error}")
+    from models import PlayerState  # type: ignore[import-not-found]
+
+    if player.state is PlayerState.PLAYING:
+        return f"already playing: {describe()}"
+    player.start(0)
+    return describe()
+
+
+def stop_playing() -> str:
+    """Stop playback (no-op when the engine never started)."""
+    player, _ = _player_instance()
+    if player is None:
+        return "stopped"
+    from models import PlayerState  # type: ignore[import-not-found]
+
+    if player.state is PlayerState.IDLE:
+        return "stopped"
+    player.stop()
+    return describe()
+
+
+def describe() -> str:
+    """One-line status for the UI label: state, frequency, level."""
+    player, error = _player_instance()
+    if error is not None and player is None:
+        return f"engine unavailable: {error}"
+    if player is None:
+        return "idle"
+
+    return (f"{player.state.name.lower()} "
+            f"{player.current_frequency:.0f} Hz "
+            f"{player.current_gain_db:+.1f} dB")
+
+
+def shutdown() -> None:
+    """Stop the audio stream at app exit (engine call is synchronous)."""
+    player, _ = _player_instance()
+    if player is None:
+        return
+    from models import PlayerState  # type: ignore[import-not-found]
+
+    if player.state is not PlayerState.IDLE:
+        player.stop()

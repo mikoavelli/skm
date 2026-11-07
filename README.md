@@ -50,22 +50,26 @@ GUI plots — runs against a known scene:
 - GUI auto-measure (`Auto-measure`) re-captures at a settable interval, which
   makes spectrum/oscillogram readouts live.
 
-## TonePlayer integration (stub)
+## TonePlayer playback (integrated engine)
 
-Two stub buttons in the "TonePlayer (stub)" panel drive the companion
-tone-generator app (../tone-player); eventually these actions will be
-implemented natively inside SKM.
+The "TonePlayer" tab plays tone bands using the TonePlayer audio engine
+built into the SKM process — no TonePlayer instance is started and the
+playback command takes effect instantly (no process spawning delay).
 
-- "Open TonePlayer" launches the TonePlayer executable. Its
-  `settings.json` MUST sit next to the executable (TonePlayer is started
-  from the same folder as SKM in the deployed layout; in dev the sibling
-  repository `../tone-player/dist/` is used).
-- "Play frequencies" / "Stop playback" toggles playback via the remote
-  `msg` CLI channel: the TonePlayer binary supports `TonePlayer msg play`,
-  `msg stop`, `msg status`, etc. — one JSON-line reply from the running
-  instance. Errors (e.g. TonePlayer not running) surface in the status bar.
-- Path resolution order: `SKM_TONE_PLAYER` env override, then the
-  executable next to the frozen SKM app, then the dev sibling repo.
+- The engine modules (`audio_engine`, `models`, `error`,
+  `settings_store`) are imported verbatim from the sibling repository
+  `../tone-player/src` in dev, and are collected into the SKM bundle by
+  `SKM.spec` for the frozen app (together with `sounddevice`/PortAudio).
+- The bands, levels, master gain and output device come from
+  TonePlayer's `settings.json`, which must sit next to the TonePlayer
+  executable: dev — `../tone-player/dist/settings.json`, frozen SKM —
+  next to the SKM executable ("same folder" deployment). Overrides:
+  `SKM_TONE_PLAYER_SRC` (engine sources), `SKM_TONE_SETTINGS`
+  (settings.json path).
+- "Play frequencies" / "Stop playback" toggle drives the engine player
+  exactly as the TonePlayer app does (`TonePlayer.start`/`stop` from
+  its `MainWindow`); `autoplay` from the settings advances the bands
+  (`seconds_per_tone` each); the status label polls the engine state.
 
 ## Precomputed-spectrum file input
 

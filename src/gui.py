@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QThread, Signal, Slot
+from PySide6.QtCore import QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -336,20 +336,6 @@ class MainWindow(QMainWindow):
         meas_l.addWidget(self.btn_once)
         left.addWidget(meas)
 
-        # TonePlayer stubs: launch the companion app and drive its remote
-        # "msg" calls; in the future these actions move natively into SKM.
-        tp = QGroupBox("TonePlayer (stub)")
-        tp_l = QVBoxLayout(tp)
-        self.btn_tp_open = QPushButton("Open TonePlayer")
-        self.btn_tp_open.clicked.connect(self.on_tp_open)
-        tp_l.addWidget(self.btn_tp_open)
-        self.btn_tp_play = QPushButton("Play frequencies")
-        self.btn_tp_play.setCheckable(True)
-        self.btn_tp_play.toggled.connect(self.on_tp_play)
-        tp_l.addWidget(self.btn_tp_play)
-        self.grp_tp = tp
-        left.addWidget(tp)
-
         # file-input display modes (active only in the Files connection)
         fm = QGroupBox("File input mode")
         fm_l = QVBoxLayout(fm)
@@ -390,7 +376,36 @@ class MainWindow(QMainWindow):
 
         self.tabs.addTab(self.pw_spec, "Spectrum")
         self.tabs.addTab(self.pw_time, "Oscillogram")
+
+        # TonePlayer tab: the companion engine runs in-process (no instance):
+        # play/stop + status readout; bands come from TonePlayer settings.
+        tp_page = QWidget()
+        tp_lay = QVBoxLayout(tp_page)
+        tp_box = QGroupBox("TonePlayer playback")
+        tp_box_l = QVBoxLayout(tp_box)
+        tp_hint = QLabel(
+            "Plays the tone bands from TonePlayer's settings.json using the\n"
+            "TonePlayer engine built into this app (no TonePlayer instance;\n"
+            "the settings.json must sit next to the TonePlayer executable).")
+        tp_hint.setWordWrap(True)
+        tp_box_l.addWidget(tp_hint)
+        self.btn_tp_play = QPushButton("Play frequencies")
+        self.btn_tp_play.setCheckable(True)
+        self.btn_tp_play.toggled.connect(self.on_tp_play)
+        tp_box_l.addWidget(self.btn_tp_play)
+        self.lbl_tp = QLabel("idle")
+        tp_box_l.addWidget(self.lbl_tp)
+        tp_box_l.addStretch(1)
+        tp_lay.addWidget(tp_box)
+        tp_lay.addStretch(1)
+        self.tabs.addTab(tp_page, "TonePlayer")
         root.addWidget(self.tabs, 1)
+
+        # TonePlayer engine status poll (cheap: plain attribute reads).
+        self._tp_timer = QTimer(self)
+        self._tp_timer.setInterval(200)
+        self._tp_timer.timeout.connect(self._refresh_tp)
+        self._tp_timer.start()
         self.setCentralWidget(central)
 
         # ---- connection bar / status -------------------------------
@@ -487,23 +502,32 @@ class MainWindow(QMainWindow):
         self.cmd("gen_stop", lambda d: d.set_generator(0, 0, 1, 0, 0, 0, 1))
         self.thread.request_measure()   # show the silence/noise floor
 
-    # ------------------------------------------------ TonePlayer stubs
-    def on_tp_open(self) -> None:
-        self.thread.post("tone-player open", toneplayer.launch)
-
+    # ------------------------------------------------ TonePlayer (in-process)
     def on_tp_play(self, on: bool) -> None:
         self.btn_tp_play.setText("Stop playback" if on else "Play frequencies")
         self.thread.post(
             f"tone-player {'play' if on else 'stop'}",
-            lambda: toneplayer.call("play" if on else "stop"))
+            toneplayer.start_playing if on else toneplayer.stop_playing)
 
     @Slot(str, str)
     def on_task(self, name: str, message: str) -> None:
         if message.startswith("ERR:"):
-            self.statusBar().showMessage(f"{name}: {message[4:].strip()}",
-                                         6000)
+            shown = message[4:].strip()
+            self.statusBar().showMessage(f"{name}: {shown}", 6000)
         else:
-            self.statusBar().showMessage(f"{name}: {message or 'ok'}", 4000)
+            shown = message or "ok"
+            self.statusBar().showMessage(f"{name}: {shown}", 4000)
+        if hasattr(self, "lbl_tp"):
+            self.lbl_tp.setText(f"{name}: {shown}")
+
+    def _refresh_tp(self) -> None:
+        """Poll the in-process TonePlayer engine state for its label."""
+        if not hasattr(self, "lbl_tp"):
+            return
+        try:
+            self.lbl_tp.setText(toneplayer.describe())
+        except Exception as exc:                        # noqa: BLE001
+            self.lbl_tp.setText(f"{type(exc).__name__}: {exc}")
 
     def on_auto(self, on: bool) -> None:
         self.thread.streaming = on
@@ -516,6 +540,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, ev) -> None:                       # noqa: N802
         self.thread.stop()
         self.thread.wait(2000)
+        toneplayer.shutdown()           # stop the in-process audio stream
         super().closeEvent(ev)
 
 
