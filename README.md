@@ -61,9 +61,19 @@ no TonePlayer instance is started and commands act instantly):
   (autoplay advances bands every `seconds_per_tone`);
 - big frequency readout, tone counter, remaining time and a tone progress
   bar, refreshed at 50 ms like the original;
-- one row per band from `settings.json`: frequency, a level slider
-  (runtime band levels, exactly like TonePlayer — not persisted),
-  the dB value and a per-band Play button;
+- band strip like the original: a horizontal strip of narrow vertical
+  band columns (each 66 px: dB value, vertical level slider, frequency,
+  per-band Play button) beside a shared level ruler, inside a
+  horizontally scrolled area with a wheel-driven scroll; master gain
+  column outside the scroll on the left;
+- band highlights and keyboard like the original: accent frame and
+  light fill on the sounding band, focus ring on the focused slider,
+  Left/Right move the slider focus (Right from master goes to the
+  bands), Up/Down nudge the focused band by one step, Space
+  play/pause, Enter activates the focused band; double click or the
+  context menu resets a slider to 0 dB;
+- band levels are runtime-only (exactly like TonePlayer — not
+  persisted) edited with the slider or Up/Down;
 - master gain slider (±10 dB from the −12 dB base), output-device selector
   (PortAudio list) and the preset selector — device/preset/autoplay/
   master choices persist into the same `settings.json` (shared with the

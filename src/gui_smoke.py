@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 
 import numpy as np
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from gui import MainWindow
@@ -122,8 +124,8 @@ def main() -> int:
     win.tabs.setCurrentIndex(2)
     print("tone-player settings:", toneplayer.settings_path())
     panel = win.tp_panel
-    band = panel._band_rows[0]
-    print("bands:", len(panel._band_rows))
+    band = panel._columns[0]
+    print("bands:", len(panel._columns))
     band.slider.setValue(band.slider.maximum())          # level -> +10 dB
     deadline = time.monotonic() + 0.3
     while time.monotonic() < deadline:
@@ -135,12 +137,28 @@ def main() -> int:
               file=sys.stderr)
         return 1
     print("band level applied:", level)
-    panel.play_button.click()                            # transport Play
+    # keyboard: Down nudges the focused band (10.0 -> 9.5), Right moves the
+    # slider focus, Space starts playback from the focused band (original keys)
+    QTest.keyClick(panel, Qt.Key.Key_Down)
+    level = panel._eng.player.level_at(0)
+    if abs(level - 9.5) > 1e-9:
+        print(f"FAIL: Up/Down nudge did not work ({level})", file=sys.stderr)
+        return 1
+    print("keyboard Down nudge ->", level)
+    QTest.keyClick(panel, Qt.Key.Key_Right)
+    if QApplication.focusWidget() is not panel._columns[1].slider:
+        print("FAIL: Right did not move the slider focus", file=sys.stderr)
+        return 1
+    QTest.keyClick(panel, Qt.Key.Key_Space)              # play focused band 1
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline and \
             panel.freq_label.text() in ("", "-"):
         app.processEvents()
         time.sleep(0.1)
+    if panel.counter_label.text() != f"Tone 2 of {panel._eng.config.tone_count}":
+        print(f"FAIL: Space playback from band 1 got '{panel.counter_label.text()}'",
+              file=sys.stderr)
+        return 1
     print("freq label:", panel.freq_label.text(),
           "| counter:", panel.counter_label.text())
     panel.stop_button.click()
