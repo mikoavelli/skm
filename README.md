@@ -50,26 +50,33 @@ GUI plots — runs against a known scene:
 - GUI auto-measure (`Auto-measure`) re-captures at a settable interval, which
   makes spectrum/oscillogram readouts live.
 
-## TonePlayer playback (integrated engine)
+## TonePlayer tab (integrated engine, full UI)
 
-The "TonePlayer" tab plays tone bands using the TonePlayer audio engine
-built into the SKM process — no TonePlayer instance is started and the
-playback command takes effect instantly (no process spawning delay).
+The top-level "TonePlayer" tab hosts a faithful PySide6 rebuild of the
+TonePlayer screen driven by the same in-process engine
+(`audio_engine.TonePlayer` imported verbatim from ../tone-player/src —
+no TonePlayer instance is started and commands act instantly):
 
-- The engine modules (`audio_engine`, `models`, `error`,
-  `settings_store`) are imported verbatim from the sibling repository
-  `../tone-player/src` in dev, and are collected into the SKM bundle by
-  `SKM.spec` for the frozen app (together with `sounddevice`/PortAudio).
-- The bands, levels, master gain and output device come from
-  TonePlayer's `settings.json`, which must sit next to the TonePlayer
-  executable: dev — `../tone-player/dist/settings.json`, frozen SKM —
-  next to the SKM executable ("same folder" deployment). Overrides:
-  `SKM_TONE_PLAYER_SRC` (engine sources), `SKM_TONE_SETTINGS`
-  (settings.json path).
-- "Play frequencies" / "Stop playback" toggle drives the engine player
-  exactly as the TonePlayer app does (`TonePlayer.start`/`stop` from
-  its `MainWindow`); `autoplay` from the settings advances the bands
-  (`seconds_per_tone` each); the status label polls the engine state.
+- transport: First/Prev/Play/Pause/Stop/Next/Last and the autoplay toggle
+  (autoplay advances bands every `seconds_per_tone`);
+- big frequency readout, tone counter, remaining time and a tone progress
+  bar, refreshed at 50 ms like the original;
+- one row per band from `settings.json`: frequency, a level slider
+  (runtime band levels, exactly like TonePlayer — not persisted),
+  the dB value and a per-band Play button;
+- master gain slider (±10 dB from the −12 dB base), output-device selector
+  (PortAudio list) and the preset selector — device/preset/autoplay/
+  master choices persist into the same `settings.json` (shared with the
+  TonePlayer app) via settings_store.save_settings (debounced 600 ms,
+  flushed at app exit).
+
+Engine sources location: `../tone-player/src` in dev (skipped for the
+frozen bundle, where PyInstaller collects `audio_engine`, `models`,
+`error`, `settings_store` and the bundled PortAudio library per
+SKM.spec). Settings file: dev — `../tone-player/dist/settings.json`,
+frozen SKM — next to the SKM executable ("same folder" deployment).
+Overrides: `SKM_TONE_PLAYER_SRC` (engine sources), `SKM_TONE_SETTINGS`
+(settings.json path).
 
 ## Precomputed-spectrum file input
 

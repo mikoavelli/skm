@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 from skm import D2XXTransport, PairTransport, Simulator, SkmDevice, Spectrum, toneplayer
 from skm.measurement import Spectrum as _Spectrum  # same class, for typing
 from skm.spectra import SpectrumFile
+from skm.tp_panel import TonePlayerPanel
 
 FMIN, FMAX = 10.0, 20000.0          # SKM spectrum span (DFM band panel)
 FILE_FMAX = 32000.0                 # test-data files span up to 32000 Hz
@@ -68,7 +69,6 @@ class LinkThread(QThread):
     state_changed = Signal(str)
     result_ready = Signal(object)          # MeasurementResult
     connection_changed = Signal(str)       # "" | "sim" | "d2xx" | "files"
-    task_done = Signal(str, str)           # side-task name, message (""|ERR)
 
     def __init__(self) -> None:
         super().__init__()
@@ -84,11 +84,6 @@ class LinkThread(QThread):
     # called from the UI thread ----------------------------------------
     def submit(self, name: str, fn) -> None:
         self._queue.append(("cmd", (name, fn)))
-
-    def post(self, name: str, fn) -> None:
-        """Queue a side task that does NOT require a device connection
-        (e.g. TonePlayer stubs); runs on the worker, reports via task_done."""
-        self._queue.append(("task", (name, fn)))
 
     def connect_simulator(self) -> None:
         self._queue.append(("connect", ("sim", "")))
@@ -136,13 +131,8 @@ class LinkThread(QThread):
                         self._disconnect()
                     elif kind == "cmd" and self.dev is not None:
                         arg[1](self.dev)
-                    elif kind == "task":
-                        self.task_done.emit(arg[0], str(arg[1]()))
                 except Exception as exc:                    # noqa: BLE001
-                    if kind == "task":
-                        self.task_done.emit(arg[0], f"ERR: {exc}")
-                    else:
-                        self.state_changed.emit(f"Error: {exc}")
+                    self.state_changed.emit(f"Error: {exc}")
             if self._input_ready() and (self.streaming or self.oneshot):
                 now = time.monotonic()
                 if self.oneshot or self.streaming and now >= next_t:
@@ -237,7 +227,6 @@ class MainWindow(QMainWindow):
         self.thread.state_changed.connect(self.on_state)
         self.thread.result_ready.connect(self.on_result)
         self.thread.connection_changed.connect(self.on_connection)
-        self.thread.task_done.connect(self.on_task)
         self.thread.start()
 
         central = QWidget()
@@ -377,35 +366,11 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.pw_spec, "Spectrum")
         self.tabs.addTab(self.pw_time, "Oscillogram")
 
-        # TonePlayer tab: the companion engine runs in-process (no instance):
-        # play/stop + status readout; bands come from TonePlayer settings.
-        tp_page = QWidget()
-        tp_lay = QVBoxLayout(tp_page)
-        tp_box = QGroupBox("TonePlayer playback")
-        tp_box_l = QVBoxLayout(tp_box)
-        tp_hint = QLabel(
-            "Plays the tone bands from TonePlayer's settings.json using the\n"
-            "TonePlayer engine built into this app (no TonePlayer instance;\n"
-            "the settings.json must sit next to the TonePlayer executable).")
-        tp_hint.setWordWrap(True)
-        tp_box_l.addWidget(tp_hint)
-        self.btn_tp_play = QPushButton("Play frequencies")
-        self.btn_tp_play.setCheckable(True)
-        self.btn_tp_play.toggled.connect(self.on_tp_play)
-        tp_box_l.addWidget(self.btn_tp_play)
-        self.lbl_tp = QLabel("idle")
-        tp_box_l.addWidget(self.lbl_tp)
-        tp_box_l.addStretch(1)
-        tp_lay.addWidget(tp_box)
-        tp_lay.addStretch(1)
-        self.tabs.addTab(tp_page, "TonePlayer")
+        # TonePlayer tab: the full playback UI (transport, bands, master,
+        # devices, presets) on the engine integrated into this process.
+        self.tp_panel = TonePlayerPanel()
+        self.tabs.addTab(self.tp_panel, "TonePlayer")
         root.addWidget(self.tabs, 1)
-
-        # TonePlayer engine status poll (cheap: plain attribute reads).
-        self._tp_timer = QTimer(self)
-        self._tp_timer.setInterval(200)
-        self._tp_timer.timeout.connect(self._refresh_tp)
-        self._tp_timer.start()
         self.setCentralWidget(central)
 
         # ---- connection bar / status -------------------------------
@@ -502,33 +467,6 @@ class MainWindow(QMainWindow):
         self.cmd("gen_stop", lambda d: d.set_generator(0, 0, 1, 0, 0, 0, 1))
         self.thread.request_measure()   # show the silence/noise floor
 
-    # ------------------------------------------------ TonePlayer (in-process)
-    def on_tp_play(self, on: bool) -> None:
-        self.btn_tp_play.setText("Stop playback" if on else "Play frequencies")
-        self.thread.post(
-            f"tone-player {'play' if on else 'stop'}",
-            toneplayer.start_playing if on else toneplayer.stop_playing)
-
-    @Slot(str, str)
-    def on_task(self, name: str, message: str) -> None:
-        if message.startswith("ERR:"):
-            shown = message[4:].strip()
-            self.statusBar().showMessage(f"{name}: {shown}", 6000)
-        else:
-            shown = message or "ok"
-            self.statusBar().showMessage(f"{name}: {shown}", 4000)
-        if hasattr(self, "lbl_tp"):
-            self.lbl_tp.setText(f"{name}: {shown}")
-
-    def _refresh_tp(self) -> None:
-        """Poll the in-process TonePlayer engine state for its label."""
-        if not hasattr(self, "lbl_tp"):
-            return
-        try:
-            self.lbl_tp.setText(toneplayer.describe())
-        except Exception as exc:                        # noqa: BLE001
-            self.lbl_tp.setText(f"{type(exc).__name__}: {exc}")
-
     def on_auto(self, on: bool) -> None:
         self.thread.streaming = on
         self.cb_auto.setText("Auto-measure: on" if on else "Auto-measure: off")
@@ -540,6 +478,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, ev) -> None:                       # noqa: N802
         self.thread.stop()
         self.thread.wait(2000)
+        self.tp_panel.flush_save()      # persist TonePlayer edits (600 ms debounce)
         toneplayer.shutdown()           # stop the in-process audio stream
         super().closeEvent(ev)
 

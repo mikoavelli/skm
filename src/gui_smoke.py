@@ -6,9 +6,12 @@ Run:  uv run python src/gui_smoke.py out.png
 """
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 import numpy as np
 from PySide6.QtWidgets import QApplication
@@ -51,6 +54,10 @@ def _wait_status(app: QApplication, win: MainWindow, prefix: str,
 def main() -> int:
     out = sys.argv[1] if len(sys.argv) > 1 else \
         f"{tempfile.gettempdir()}/skm_gui.png"
+    # TonePlayer settings copy: smoke must not touch the real dist file
+    tp_dir = Path(tempfile.mkdtemp(prefix="skm_tp_"))
+    shutil.copy(toneplayer.settings_path(), tp_dir / "settings.json")
+    os.environ["SKM_TONE_SETTINGS"] = str(tp_dir / "settings.json")
     app = QApplication([])
     app.setStyle("Fusion")
     win = MainWindow()
@@ -111,35 +118,35 @@ def main() -> int:
     print(f"noise mode level: {noise_level}, signal+noise level: {sn_level}")
     win.rb_noise.setChecked(True)
 
-    # 3) TonePlayer tab: in-process engine, instant play
+    # 3) TonePlayer tab: full panel on the in-process engine
     win.tabs.setCurrentIndex(2)
     print("tone-player settings:", toneplayer.settings_path())
-    t0 = time.monotonic()
-    win.btn_tp_play.setChecked(True)          # becomes "Stop playback"
-    if not _wait_status(app, win, "tone-player play", 15.0):
-        print("FAIL: in-process TonePlayer play did not report", file=sys.stderr)
-        return 1
-    print(f"first play took {time.monotonic() - t0:.2f} s:",
-          win.statusBar().currentMessage())
-    deadline = time.monotonic() + 5.0         # live status label turns "playing"
-    while time.monotonic() < deadline and \
-            not win.lbl_tp.text().startswith("playing"):
+    panel = win.tp_panel
+    band = panel._band_rows[0]
+    print("bands:", len(panel._band_rows))
+    band.slider.setValue(band.slider.maximum())          # level -> +10 dB
+    deadline = time.monotonic() + 0.3
+    while time.monotonic() < deadline:
         app.processEvents()
-        time.sleep(0.05)
-    if not win.lbl_tp.text().startswith("playing"):
-        print("FAIL: engine status label did not show playing state",
+        time.sleep(0.02)
+    level = panel._eng.player.level_at(0)    # TonePlayer keeps levels runtime-only
+    if abs(level - 10.0) > 1e-9:
+        print(f"FAIL: band level edit did not reach the engine ({level})",
               file=sys.stderr)
         return 1
+    print("band level applied:", level)
+    panel.play_button.click()                            # transport Play
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and \
+            panel.freq_label.text() in ("", "-"):
+        app.processEvents()
+        time.sleep(0.1)
+    print("freq label:", panel.freq_label.text(),
+          "| counter:", panel.counter_label.text())
+    panel.stop_button.click()
     tp_png = out.replace(".png", "_tp.png")
     win.grab().save(tp_png)
-    print("saved", tp_png, "| engine:", win.lbl_tp.text())
-    win.thread.post("tone-player stop", toneplayer.stop_playing)
-    if not _wait_status(app, win, "tone-player stop", 10.0):
-        print("FAIL: in-process TonePlayer stop did not report", file=sys.stderr)
-        return 1
-    win.btn_tp_play.blockSignals(True)
-    win.btn_tp_play.setChecked(False)
-    win.btn_tp_play.blockSignals(False)
+    print("saved", tp_png)
 
     print("state:", win.lbl_state.text())
     win.thread.stop()
