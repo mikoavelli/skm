@@ -59,7 +59,7 @@ def main() -> int:
     if win.stack.currentIndex() != MainWindow.MODE_SKM:
         print("FAIL: SKM mode is not the first page", file=sys.stderr)
         return 1
-    win.on_connect()                      # combo index 0 = СИМУЛЯТОР
+    win.on_connect()                      # combo index 0 = simulator
     if not _wait_until(app, lambda: win.layers["fon"]["freq"] is not None,
                        10.0):
         print("FAIL: background layer not measured", file=sys.stderr)
