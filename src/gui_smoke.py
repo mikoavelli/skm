@@ -118,7 +118,7 @@ def main() -> int:
     png = out.replace(".png", "_tp.png")
     win.grab().save(png)
     print("saved", png, "| bands:", len(panel._columns),
-          "| label:", panel.play_button.text(),
+          "| mode:", panel._play_button_mode,
           "| engine:", panel._eng.player.state.name.lower())
 
     # 6) analyzer stub page

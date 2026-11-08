@@ -78,33 +78,45 @@ TonePlayer screen driven by the same in-process engine
 (`audio_engine.TonePlayer` imported verbatim from ../tone-player/src —
 no TonePlayer instance is started and commands act instantly):
 
-- transport: First/Prev/Play/Pause/Stop/Next/Last and the autoplay toggle
-  (autoplay advances bands every `seconds_per_tone`);
+- transport: exactly the two buttons of the original — the accent
+  play/pause button (painter-drawn glyphs) and the stop button; plus
+  the autoplay toggle switch («Автовоспроизведение»); autoplay advances
+  bands every `seconds_per_tone`;
+- header like the original: settings gear (Ctrl+, or the click opens
+  the ported settings dialog: equalizer scale, tone timing, preset
+  frequencies), preset combo («По умолчанию» / user presets), preset
+  save (bookmark) and delete (trash) buttons, output-device combo and
+  the «Автовоспроизведение» switch; device and preset/autoplay/master
+  choices persist into the shared `settings.json` (debounced 600 ms,
+  flushed at app exit); a changed settings file is reloaded from disk
+  (watcher), a foreign edit is not overwritten by this process;
 - big frequency readout, tone counter, remaining time and a tone progress
   bar, refreshed at 50 ms like the original;
 - band strip like the original: a horizontal strip of narrow vertical
   band columns (each 66 px: dB value, vertical level slider, frequency,
-  per-band Play button) beside a shared level ruler, inside a
-  horizontally scrolled area with a wheel-driven scroll; master gain
-  column outside the scroll on the left;
-- band highlights and keyboard like the original: accent frame and
-  light fill on the sounding band, focus ring on the focused slider,
+  per-band Play button with painter-drawn icons) beside a shared level
+  ruler, inside a horizontally scrolled area with a wheel-driven
+  scroll; master gain column outside the scroll on the left;
+- selection is visibly separate from playback like the original: the
+  selected tone column keeps the frame (accented while it sounds); the
+  dB value label is visible only on the selected/current column (or
+  the hovered/edited/focused one) so stale numbers are never left over
+  other bands;
+- keyboard like the original: focus ring on the focused slider,
   Left/Right move the slider focus (Right from master goes to the
   bands), Up/Down nudge the focused band by one step, Space
   play/pause, Enter activates the focused band; double click or the
   context menu resets a slider to 0 dB;
 - band levels are runtime-only (exactly like TonePlayer — not
   persisted) edited with the slider or Up/Down;
-- master gain slider (±10 dB from the −12 dB base), output-device selector
-  (PortAudio list) and the preset selector — device/preset/autoplay/
-  master choices persist into the same `settings.json` (shared with the
-  TonePlayer app) via settings_store.save_settings (debounced 600 ms,
-  flushed at app exit).
+- master gain slider (±10 dB from the −12 dB base) and the PortAudio
+  output-device list (the selector is disabled while playing).
 
 Engine sources location: `../tone-player/src` in dev (skipped for the
 frozen bundle, where PyInstaller collects `audio_engine`, `models`,
-`error`, `settings_store` and the bundled PortAudio library per
-SKM.spec). Settings file: dev — `../tone-player/dist/settings.json`,
+`error`, `settings_store`, `ui_text`, `presets` and the bundled
+PortAudio library per SKM.spec). Settings file: dev —
+`../tone-player/dist/settings.json`,
 frozen SKM — next to the SKM executable ("same folder" deployment).
 Overrides: `SKM_TONE_PLAYER_SRC` (engine sources), `SKM_TONE_SETTINGS`
 (settings.json path).
