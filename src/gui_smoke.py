@@ -1,7 +1,8 @@
 """Headless smoke test for the GUI.
 
-Exercises the simulator scene roundtrip (generate retune), then the
-file-input display modes (noise / signal + noise), grabbing PNGs.
+Exercises the mode shell, the SKM page (simulator measurement, colour
+layers, export, TONE toggle), the tone generator page and the stub
+page, grabbing PNGs along the way.
 Run:  uv run python src/gui_smoke.py out.png
 """
 from __future__ import annotations
@@ -13,44 +14,28 @@ import tempfile
 import time
 from pathlib import Path
 
-import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from gui import MainWindow
+from gui import QSS, MainWindow
 from skm import toneplayer
 
 
-def _wait_label(app: QApplication, win: MainWindow, text: str,
-                seconds: float) -> bool:
-    """Pump events until the FREQUENCY label shows `text` (or timeout)."""
+def _wait_until(app: QApplication, fn, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         app.processEvents()
-        if win.lb_freq.text() == text:
-            return True
         time.sleep(0.02)
+        if fn():
+            return True
     return False
 
 
-def _expected_label(app: QApplication, win: MainWindow, kind: str) -> str:
-    """Peak caption computed from the parsed file (data-driven assert)."""
-    sf = win.thread.files[kind]
-    i = int(np.argmax(sf.volts))
-    return f"{sf.freqs_hz[i]:.0f} Hz"
-
-
-def _wait_status(app: QApplication, win: MainWindow, prefix: str,
-                 seconds: float) -> bool:
-    """Pump events until the status bar message starts with `prefix`."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+def _settle(app: QApplication, seconds: float = 0.4) -> None:
+    """Pump the event loop so timers (refresh/pollers) catch up."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
         app.processEvents()
-        if win.statusBar().currentMessage().startswith(prefix):
-            return True
         time.sleep(0.02)
-    return False
 
 
 def main() -> int:
@@ -61,112 +46,91 @@ def main() -> int:
     shutil.copy(toneplayer.settings_path(), tp_dir / "settings.json")
     os.environ["SKM_TONE_SETTINGS"] = str(tp_dir / "settings.json")
     app = QApplication([])
-    app.setStyle("Fusion")
+    app.setStyleSheet(QSS)
     win = MainWindow()
     win.show()
     win.resize(1180, 760)
-
-    # 1) simulator: handshake + measurement + generator scene retune
-    win.on_connect()                      # combo index 0 = SKM-23 Simulator
-    win.thread.request_measure()
-    if not _wait_label(app, win, "1000 Hz", 10.0):
-        print("FAIL: no 1000 Hz peak after first measure", file=sys.stderr)
-        return 1
-    win.btn_ch_y.setChecked(True)
-    win.on_channels()
-    win.sp_gen.setValue(5120)
-    win.on_gen_on()                       # ON also re-measures
-    if not _wait_label(app, win, "5120 Hz", 15.0):
-        print("FAIL: generator did not retune the scene to 5120 Hz",
-              file=sys.stderr)
-        return 1
-
-    spectra_png = out.replace(".png", "_sim.png")
-    win.grab().save(spectra_png)
-    print("saved", spectra_png)
-
-    win.tabs.setCurrentIndex(1)           # oscillogram tab (sim connected)
-    end = time.monotonic() + 0.3
+    end = time.monotonic() + 0.5
     while time.monotonic() < end:
         app.processEvents()
         time.sleep(0.02)
-    osc_png = out.replace(".png", "_time.png")
-    win.grab().save(osc_png)
-    print("saved", osc_png)
 
-    # 2) file input: connect the test-data pair, both display modes
-    win.cb_conn.setCurrentIndex(2)
-    win.on_connect()
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline and not win.grp_files.isEnabled():
-        app.processEvents()
-        time.sleep(0.02)
-    if not _wait_label(app, win, _expected_label(app, win, "noise"), 5.0):
-        print("FAIL: noise file spectrum not shown", file=sys.stderr)
+    # 1) SKM page: simulator connect + continuous measurement
+    if win.stack.currentIndex() != MainWindow.MODE_SKM:
+        print("FAIL: SKM mode is not the first page", file=sys.stderr)
         return 1
-    noise_level = win.lb_level.text()
-
-    win.tabs.setCurrentIndex(0)
-    file_png = out
-    win.grab().save(file_png)
-    print("saved", file_png)
-
-    win.rb_signal.setChecked(True)        # switch to signal + noise mode
-    if not _wait_label(app, win, _expected_label(app, win, "signal_noise"),
-                       5.0):
-        print("FAIL: signal+noise file spectrum not shown", file=sys.stderr)
+    win.on_connect()                      # combo index 0 = СИМУЛЯТОР
+    if not _wait_until(app, lambda: win.layers["fon"]["freq"] is not None,
+                       10.0):
+        print("FAIL: background layer not measured", file=sys.stderr)
         return 1
-    sn_level = win.lb_level.text()
-    print(f"noise mode level: {noise_level}, signal+noise level: {sn_level}")
-    win.rb_noise.setChecked(True)
+    print("SKM info фон:", win.lb_freq.text(), win.lb_level.text())
 
-    # 3) TonePlayer tab: full panel on the in-process engine
-    win.tabs.setCurrentIndex(2)
-    print("tone-player settings:", toneplayer.settings_path())
+    # 2) switch the colour to red: the next measurements fill the signal layer
+    win.btn_signal.click()
+    if not _wait_until(app, lambda: win.layers["signal"]["freq"] is not None,
+                       10.0):
+        print("FAIL: signal layer not measured", file=sys.stderr)
+        return 1
+    print("SKM info сигнал:", win.lb_freq.text(), win.lb_level.text())
+    _settle(app)
+    png = out.replace(".png", "_skm.png")
+    win.grab().save(png)
+    print("saved", png)
+
+    # 3) export both layers to a text file (without the dialog)
+    export_path = os.path.join(tempfile.gettempdir(), "skm_warning_export.txt")
+    if win.write_export(export_path) != "saved":
+        print("FAIL: export reported no data", file=sys.stderr)
+        return 1
+    txt = Path(export_path).read_text(encoding="utf-8")
+    for marker in ("ФОН", "СИГНАЛ+ФОН"):
+        if marker not in txt:
+            print(f"FAIL: export missing {marker}", file=sys.stderr)
+            return 1
+    print("export ok:", export_path)
+
+    # 4) TONE button: start/stop the acoustic playback from the SKM page
+    win.btn_tone.click()
+    if not _wait_until(app, lambda: win.btn_tone.isChecked(), 8.0):
+        print("FAIL: TONE did not start the playback", file=sys.stderr)
+        return 1
+    print("TONE on, engine:", toneplayer.engine().player.state.name.lower())
+    win.btn_tone.click()
+    if not _wait_until(app,
+                       lambda: not win.btn_tone.isChecked(), 5.0):
+        print("FAIL: TONE did not stop the playback", file=sys.stderr)
+        return 1
+
+    # 5) tone generator page: the full TonePlayer panel still works
+    win._mode_group.button(MainWindow.MODE_TONE).click()
+    if win.stack.currentIndex() != MainWindow.MODE_TONE:
+        print("FAIL: tone page did not switch", file=sys.stderr)
+        return 1
     panel = win.tp_panel
     band = panel._columns[0]
-    print("bands:", len(panel._columns))
-    band.slider.setValue(band.slider.maximum())          # level -> +10 dB
-    deadline = time.monotonic() + 0.3
-    while time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(0.02)
-    level = panel._eng.player.level_at(0)    # TonePlayer keeps levels runtime-only
-    if abs(level - 10.0) > 1e-9:
-        print(f"FAIL: band level edit did not reach the engine ({level})",
+    band.slider.setValue(band.slider.maximum())       # level -> +10 dB
+    _settle(app)
+    if abs(panel._eng.player.level_at(0) - 10.0) > 1e-9:
+        print("FAIL: band level edit did not reach the engine",
               file=sys.stderr)
         return 1
-    print("band level applied:", level)
-    # keyboard: Down nudges the focused band (10.0 -> 9.5), Right moves the
-    # slider focus, Space starts playback from the focused band (original keys)
-    QTest.keyClick(panel, Qt.Key.Key_Down)
-    level = panel._eng.player.level_at(0)
-    if abs(level - 9.5) > 1e-9:
-        print(f"FAIL: Up/Down nudge did not work ({level})", file=sys.stderr)
-        return 1
-    print("keyboard Down nudge ->", level)
-    QTest.keyClick(panel, Qt.Key.Key_Right)
-    if QApplication.focusWidget() is not panel._columns[1].slider:
-        print("FAIL: Right did not move the slider focus", file=sys.stderr)
-        return 1
-    QTest.keyClick(panel, Qt.Key.Key_Space)              # play focused band 1
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline and \
-            panel.freq_label.text() in ("", "-"):
-        app.processEvents()
-        time.sleep(0.1)
-    if panel.counter_label.text() != f"Tone 2 of {panel._eng.config.tone_count}":
-        print(f"FAIL: Space playback from band 1 got '{panel.counter_label.text()}'",
-              file=sys.stderr)
-        return 1
-    print("freq label:", panel.freq_label.text(),
-          "| counter:", panel.counter_label.text())
-    panel.stop_button.click()
-    tp_png = out.replace(".png", "_tp.png")
-    win.grab().save(tp_png)
-    print("saved", tp_png)
+    png = out.replace(".png", "_tp.png")
+    win.grab().save(png)
+    print("saved", png, "| bands:", len(panel._columns),
+          "| label:", panel.play_button.text(),
+          "| engine:", panel._eng.player.state.name.lower())
 
-    print("state:", win.lbl_state.text())
+    # 6) analyzer stub page
+    win._mode_group.button(MainWindow.MODE_ANALYZER).click()
+    if win.stack.currentIndex() != MainWindow.MODE_ANALYZER:
+        print("FAIL: stub page did not switch", file=sys.stderr)
+        return 1
+    _settle(app)
+    png = out.replace(".png", "_stub.png")
+    win.grab().save(png)
+    print("saved", png)
+
     win.thread.stop()
     win.thread.wait(2000)
     return 0

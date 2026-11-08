@@ -21,10 +21,14 @@ Package layout (uv, `src/`):
   'F'/'Q'/'J', generator 'H', measurement 'N'/'S' capture,
 - `src/skm/measurement.py` — stream capture → 65536-point spectrum (numpy
   FFT) mirroring FUN_00589aec post-processing,
-- `src/main.py` / `src/gui.py` — the measurement GUI (spectrum +
-  oscillogram + FREQUENCY/LEVEL readouts), all device I/O in a QThread,
+- `src/main.py` / `src/gui.py` — app shell with three top-level modes
+  (Russian UI, English comments): «СКМ» measurement screen (INFO column,
+  green ФОН / red СИГНАЛ+ФОН colour layers, navy spectrum canvas with
+  the yellow cursor, TXT export, TONE playback toggle), the tone
+  generator page, the analyzer stub; all device I/O in a QThread,
 - `src/cli.py` — probe/speaker/sample/gen/measure CLI commands,
-- `src/gui_smoke.py` — headless smoke test (connect → measure → PNG grabs),
+- `src/gui_smoke.py` — headless smoke test (modes → measure → export →
+  TONE → PNG grabs),
 - `SKM.spec` — PyInstaller build (Qt module/plugin pruning, numpy kept).
 
 Evidence: the reverse-engineering base lives in the sibling `CKM2PO` project
@@ -47,12 +51,29 @@ GUI plots — runs against a known scene:
 - direct scene control for tests: `Simulator.set_scene(freq=…, amp=…, noise=…)`;
 - `uv run python src/cli.py sweep` walks the scene 200…8000 Hz through the
   full protocol (`'H'` → `'N'`/`'S'` → FFT) and prints captured peaks;
-- GUI auto-measure (`Auto-measure`) re-captures at a settable interval, which
-  makes spectrum/oscillogram readouts live.
+- in the SKM mode the measurement loop streams continuously (0.5 s
+  interval, module constant `STREAM_INTERVAL_S`), refreshing the column
+  of the selected colour — the other colour's layer stays frozen for
+  comparison, exactly like the original background→signal workflow.
 
-## TonePlayer tab (integrated engine, full UI)
+## Modes shell
 
-The top-level "TonePlayer" tab hosts a faithful PySide6 rebuild of the
+The window top is a flat mode bar; nothing sits above it:
+
+- «СКМ» — original-like measurement screen (screenshot: `analysis`
+  workflow — fill the green background layer, switch the colour, fill
+  the red signal layer, then export both into a `*.txt` file via the
+  original-style dialog `Текстовый файл|*.txt`). Sources: simulator
+  (no hardware), test-data files (both spectra at once: noise → ФОН,
+  signal_noise → СИГНАЛ+ФОН), or SKM-23 hardware over D2XX.
+  TONE toggles the acoustic playback (in-process tone engine; the same
+  button state is polled from the generator's player 3×/s).
+- «ГЕНЕРАТОР ЧАСТОТ» — the full tone playback UI (below).
+- «АНАЛИЗАТОР ЧАСТОТ» — stub for a future mode.
+
+## Tone generator mode (integrated engine, full UI)
+
+The tone mode hosts a faithful PySide6 rebuild of the
 TonePlayer screen driven by the same in-process engine
 (`audio_engine.TonePlayer` imported verbatim from ../tone-player/src —
 no TonePlayer instance is started and commands act instantly):
@@ -101,7 +122,7 @@ path as a device capture.
 - Two display modes via the "File input mode" radio group: Noise (U_n) /
   Signal + noise (U_sn); switching re-renders instantly.
 - Levels are shown as 20*log10(V) (dB re 1 V); the frequency axis widens to
-  the full file span (32000 Hz); the oscillogram tab is disabled since the
+  the full file span (32000 Hz); the oscillogram view is disabled since the
   files contain no time-domain data.
 
 Quantization note: the divider is an integer, so e.g. "4000 Hz" produces
