@@ -423,6 +423,7 @@ QComboBox QAbstractItemView {{
 }}
 
 QDoubleSpinBox, QSpinBox {{
+    color: {COLOR_TEXT};
     background-color: {COLOR_SURFACE};
     border: 1px solid {COLOR_BORDER};
     border-radius: 8px;
@@ -1463,6 +1464,10 @@ class TonePlayerPanel(QWidget):
             return
         self._eng.player.stop()
         self._finishing_handled = False
+        # Stop also rewinds the selection to the first band (the engine
+        # resets tone_index to 0; move the focus ring back there too).
+        self._focused = 0
+        self._focus_band(0)
         self._refresh()
 
     def _start_playback(self, index: int) -> None:

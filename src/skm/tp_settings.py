@@ -81,7 +81,19 @@ def _double(value: float, minimum: float, maximum: float, *,
     box.setSuffix(suffix)
     box.setValue(value)
     box.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+    _fix_spinbox_editor(box)
     return box
+
+
+def _fix_spinbox_editor(box: QDoubleSpinBox | QSpinBox) -> None:
+    """Keep the internal editor of a QSS-styled spin box visible.
+
+    Qt 6.12 regression: a stylesheet with box-model declarations (border,
+    padding, ...) on a QSpinBox/QDoubleSpinBox collapses the internal
+    QLineEdit to a 1 px wide rect, so the value paints nothing. Give the
+    editor an explicit sane minimum width.
+    """
+    box.lineEdit().setMinimumWidth(72)
 
 
 def _frequencies_text(bands) -> str:
@@ -176,6 +188,7 @@ class SettingsDialog(QDialog):
         self.rate_spin.setSuffix(" Гц")
         self.rate_spin.setValue(settings.sample_rate)
         self.rate_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        _fix_spinbox_editor(self.rate_spin)
         _row(tone_form, "Время на тон", self.seconds_spin)
         _row(tone_form, "Нарастание и затухание", self.fade_spin)
         _row(tone_form, "Частота дискретизации", self.rate_spin)
