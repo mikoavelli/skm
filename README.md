@@ -36,9 +36,21 @@ Package layout (uv, `src/`):
   `setClipToView/setDownsampling(auto, peak)` so dense streams redraw
   cheaply,
 - `src/cli.py` — probe/speaker/sample/gen/measure CLI commands,
+- `vendor/` — files the CI bundle needs but no sibling repository:
+  `ftd2xx64.dll` (FTDI D2XX, 64-bit), `test_data/{noise,signal_noise}.txt`,
+  `settings.json` (tone generator defaults; the bundle expects it next
+  to the executable),
 - `src/gui_smoke.py` — headless smoke test (modes → measure → export →
   TONE → PNG grabs),
-- `SKM.spec` — PyInstaller build (Qt module/plugin pruning, numpy kept).
+- `SKM.spec` — PyInstaller build (Qt module/plugin pruning, numpy kept);
+  `SKM_ONEDIR=1` switches the bundle into a one-directory distribution,
+- `.github/workflows/build.yml` — Windows build on every push to `main`
+  (uv + PyInstaller, engine checked out from the sibling tone-player
+  repo): the zip contains SKM.exe + `_internal` + `settings.json`
+  (tone generator defaults from `vendor/`), `test_data/` with the
+  noise.txt / signal_noise.txt test spectra and `ftd2xx.dll` (FTDI
+  D2XX, copied from `vendor/ftd2xx64.dll`); the same zip is attached to
+  the release on a `v*` tag,
 
 Evidence: the reverse-engineering base lives in the sibling `CKM2PO` project
 repo — `analysis/meas/defns/FUN_*.c` (5858 decompiled bodies) and the "SKM

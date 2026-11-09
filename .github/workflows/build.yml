@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The integrated TonePlayer audio engine is imported verbatim from
+      # the sibling repository (see skm/toneplayer.py): check it out next
+      # to the SKM sources. Default github.token covers it when both
+      # repositories belong to the same owner and are accessible to the
+      # workflow; for a private sibling set the REPO_TOKEN secret (classic
+      # PAT with "repo" scope) — the `||` fallback picks it up when set.
+      - name: Check out the TonePlayer engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/tone-player
+          path: tone-player
+          token: ${{ secrets.REPO_TOKEN || github.token }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14.9"
+
+      - name: Restore build dependencies
+        run: uv sync --group build
+
+      - name: Build the bundle (onedir)
+        run: uv run --group build pyinstaller SKM.spec --noconfirm
+        env:
+          SKM_ONEDIR: "1"
+
+      # The deployable folder: SKM.exe + _internal + settings.json
+      # (tone generator), test_data/ (test spectra for the FILES source)
+      # and the 64-bit FTDI D2XX dll as ftd2xx.dll (ctypes loads it by
+      # that name from the application directory).
+      - name: Assemble the distribution folder
+        shell: pwsh
+        run: |
+          Copy-Item vendor/settings.json dist/SKM/settings.json
+          New-Item -ItemType Directory -Force dist/SKM/test_data | Out-Null
+          Copy-Item vendor/test_data/*.txt dist/SKM/test_data/
+          Copy-Item vendor/ftd2xx64.dll dist/SKM/ftd2xx.dll
+          Remove-Item SKM-windows.zip -ErrorAction SilentlyContinue
+          Compress-Archive -Path dist/SKM/* -DestinationPath SKM-windows.zip
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SKM-windows
+          path: SKM-windows.zip
+
+      - name: Attach the archive to the release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: SKM-windows.zip

@@ -164,7 +164,14 @@ a = Analysis(
     [str(SRC_DIR / "main.py")],
     # tone-player/src holds the integrated TonePlayer audio engine
     # (top-level modules audio_engine, models, error, settings_store).
-    pathex=[str(SRC_DIR), str(ROOT_DIR.parent / "tone-player" / "src")],
+    # In CI the engine repo is checked out inside the workspace (sibling
+    # of the SKM checkout); in dev it is the sibling project directory.
+    pathex=[str(SRC_DIR)]
+    + [
+        str(path / "src")
+        for path in (ROOT_DIR, ROOT_DIR.parent)
+        if (path / "tone-player" / "src" / "audio_engine.py").is_file()
+    ],
     binaries=[],
     datas=[],
     hiddenimports=[

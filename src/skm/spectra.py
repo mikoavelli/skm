@@ -15,6 +15,7 @@ the device transport.
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,14 +56,18 @@ class SpectrumFile:
 
 
 def default_test_data_dir() -> Path:
-    """Resolve the signal-processor test_data directory.
+    """Resolve the test-data directory with noise.txt / signal_noise.txt.
 
-    Order: SKM_TEST_DATA_DIR env override, then the sibling repository
-    layout used on this machine (<projects>/signal-processor/test_data).
+    Order: SKM_TEST_DATA_DIR env override, then a test_data folder next to
+    the executable (the frozen bundle ships vendor/test_data there), then
+    the sibling repository layout used in dev
+    (<projects>/signal-processor/test_data).
     """
     override = os.environ.get("SKM_TEST_DATA_DIR")
     if override:
         return Path(override)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "test_data"
     # spectra.py -> skm/ -> src/ -> <repo>/ -> <projects>/
     return Path(__file__).resolve().parents[2].parent / "signal-processor" / "test_data"
 
