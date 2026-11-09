@@ -44,7 +44,8 @@ Package layout (uv, `src/`):
   TONE → PNG grabs),
 - `SKM.spec` — PyInstaller build (Qt module/plugin pruning, numpy kept);
   `SKM_ONEDIR=1` switches the bundle into a one-directory distribution,
-- `.github/workflows/build.yml` — Windows build on every push to `main`
+- `.github/workflows/build.yml` — Windows build on demand
+  (Actions → build → Run workflow) and on a `v*` tag
   (uv + PyInstaller, engine checked out from the sibling tone-player
   repo): the zip contains SKM.exe + `_internal` + `settings.json`
   (tone generator defaults from `vendor/`), `test_data/` with the
