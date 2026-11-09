@@ -1,6 +1,6 @@
 [project]
 name = "skm"
-version = "0.1.0"
+version = "0.2.0"
 description = "SKM-2PO measurement/communication mechanism: protocol core + measurement GUI (standalone)"
 requires-python = "==3.14.9"
 dependencies = [
