@@ -54,11 +54,14 @@ jobs:
           Remove-Item SKM-windows.zip -ErrorAction SilentlyContinue
           Compress-Archive -Path dist/SKM/* -DestinationPath SKM-windows.zip
 
+      # The artifact uploads the folder itself (GitHub compresses once),
+      # so the downloaded artifact is a single-level zip with the
+      # deployable folder — no zip inside a zip.
       - name: Upload the artifact
         uses: actions/upload-artifact@v4
         with:
           name: SKM-windows
-          path: SKM-windows.zip
+          path: dist/SKM
 
       - name: Attach the archive to the release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/')
