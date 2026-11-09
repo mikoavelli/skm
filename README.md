@@ -24,8 +24,17 @@ Package layout (uv, `src/`):
 - `src/main.py` / `src/gui.py` — app shell with three top-level modes
   (Russian UI, English comments): «СКМ» measurement screen (INFO column,
   green ФОН / red СИГНАЛ+ФОН colour layers, navy spectrum canvas with
-  the yellow cursor, TXT export, TONE playback toggle), the tone
-  generator page, the analyzer stub; all device I/O in a QThread,
+  the yellow cursor, the FILTER BANDWIDTH strip under the canvas, TXT
+  export, TONE playback toggle), the tone generator page, the analyzer
+  stub; all device I/O in a QThread.
+  Canvas: the view is pinned to the measured span by pyqtgraph viewbox
+  limits (no panning/zooming outside our frequencies); file-layers are
+  shown in the file's own units (В), device layers in дБ; the
+  «Ширина полосы фильтра» slider (1..50 Гц) aggregates the trace per
+  band (peak inside a band, `np.maximum.reduceat`), 1 Гц = every data
+  point untouched, and acts as the zoom; curves keep
+  `setClipToView/setDownsampling(auto, peak)` so dense streams redraw
+  cheaply,
 - `src/cli.py` — probe/speaker/sample/gen/measure CLI commands,
 - `src/gui_smoke.py` — headless smoke test (modes → measure → export →
   TONE → PNG grabs),

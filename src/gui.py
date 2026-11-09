@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QSlider,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -124,6 +125,20 @@ QPushButton#colorButton[sel="1"] {{
     border: 2px solid #3d7ecc; background: #eaf2fc;
 }}
 QWidget#pageStub QLabel {{ color: #77838f; }}
+QWidget#bandStrip {{
+    background: #e4ebf4; border-top: 1px solid {COL_PANEL_BORDER};
+}}
+QLabel#bandCaption {{
+    color: #33415c; font-weight: 700; font-size: 11px; letter-spacing: 1px;
+}}
+QLabel#bandValue {{ color: {COL_TEXT_VALUE}; font-weight: 800; }}
+QWidget#bandStrip QSlider::groove:horizontal {{
+    height: 6px; background: #c9d5e4; border-radius: 3px;
+}}
+QWidget#bandStrip QSlider::handle:horizontal {{
+    width: 18px; margin: -6px 0; border-radius: 9px;
+    background: #3d7ecc;
+}}
 """
 
 
@@ -482,11 +497,15 @@ class MainWindow(QMainWindow):
             ai.setTextPen(pg.mkPen(COL_CANVAS_AXIS))
             ai.setPen(pg.mkPen(COL_CANVAS_GRID))
         self.pl_spec.showGrid(x=True, alpha=0.25)
-        self._apply_canvas_range()
+        self._band_hz = 1                  # FILTER BANDWIDTH, Hz (1 = raw)
+        self._view_started = False         # first-data auto range once
         self.curve_fon = self.pw_spec.plot(
             pen=pg.mkPen(color=COL_FON, width=2))
         self.curve_signal = self.pw_spec.plot(
             pen=pg.mkPen(color=COL_SIGNAL, width=2))
+        for curve in (self.curve_fon, self.curve_signal):
+            curve.setClipToView(True)
+            curve.setDownsampling(auto=True, method="peak")
         cursor = pg.InfiniteLine(
             angle=90, movable=False, pen=pg.mkPen(color=COL_CURSOR, width=2))
         cursor.setVisible(False)
@@ -498,6 +517,32 @@ class MainWindow(QMainWindow):
         }
         body.addWidget(self.pw_spec, 1)
         lay.addLayout(body, 1)
+
+        # FILTER BANDWIDTH strip under the canvas (original SGB_FGate):
+        # one drawn band spans sl_band Hz, so the control doubles as zoom.
+        strip = QWidget(objectName="bandStrip")
+        strip.setObjectName("bandStrip")
+        hs = QHBoxLayout(strip)
+        hs.setContentsMargins(12, 6, 12, 6)
+        hs.setSpacing(10)
+        cap_band = QLabel("ШИРИНА ПОЛОСЫ ФИЛЬТРА")
+        cap_band.setObjectName("bandCaption")
+        hs.addWidget(cap_band)
+        self.sl_band = QSlider(Qt.Orientation.Horizontal)
+        self.sl_band.setRange(1, 50)
+        self.sl_band.setValue(self._band_hz)
+        self.sl_band.setMinimumWidth(220)
+        self.sl_band.setMaximumWidth(320)
+        self.sl_band.setToolTip("Ширина одной рисуемой полосы фильтра: "
+                                "меньше — подробнее (зум), больше — грубее.")
+        self.sl_band.valueChanged.connect(self._on_band)
+        hs.addWidget(self.sl_band)
+        self.lb_band = QLabel(f"{self._band_hz} Гц")
+        self.lb_band.setObjectName("bandValue")
+        self.lb_band.setMinimumWidth(56)
+        hs.addWidget(self.lb_band)
+        hs.addStretch(1)
+        lay.addWidget(strip)
         return page
 
     def _build_stub_page(self) -> QWidget:
@@ -523,7 +568,104 @@ class MainWindow(QMainWindow):
                                  and self._conn_kind in ("sim", "d2xx"))
 
     def _apply_canvas_range(self) -> None:
+        """Fixed initial span (before any data); data updates re-pin it."""
         self.pl_spec.setXRange(FMIN, self._fmax, padding=0)
+
+    def _on_band(self, value: int) -> None:
+        self._band_hz = value
+        self.lb_band.setText(f"{value} Гц")
+        self._refresh_canvas()
+
+    def _level_series(self, layer: dict) -> tuple[np.ndarray, np.ndarray]:
+        """dB series over the analysis band (for the peak readout)."""
+        spec = layer.get("spec")
+        if spec is None:
+            return np.array([]), np.array([])
+        freqs = np.asarray(spec.freqs, dtype=float)
+        db = np.asarray(spec.db, dtype=float)
+        lo = FMIN if not layer.get("volts") else float(freqs[0])
+        m = (freqs >= lo) & (freqs <= self._fmax)
+        if not m.any():
+            return np.array([]), np.array([])
+        return freqs[m], db[m]
+
+    def _layer_series(self, layer: dict) -> tuple[np.ndarray, np.ndarray]:
+        """Displayed series of a layer in its data units (file mode: V)."""
+        spec = layer.get("spec")
+        if spec is None:
+            return np.array([]), np.array([])
+        x = np.asarray(spec.freqs, dtype=float)
+        y = np.asarray(spec.lin if layer.get("volts") else spec.db,
+                       dtype=float)
+        if not layer.get("volts"):
+            m = (x >= FMIN) & (x <= self._fmax)
+            if not m.any():
+                return np.array([]), np.array([])
+            x, y = x[m], y[m]
+        return x, y
+
+    @staticmethod
+    def _band_series(x: np.ndarray, y: np.ndarray, w: float):
+        """Aggregate a series per w-Hz filter band (peak inside a band).
+
+        w == 1 (the minimal width) keeps every data point untouched, so
+        the drawn trace equals the measured data exactly.
+        """
+        if x.size == 0 or w <= 1:
+            return x, y
+        start = float(x[0])
+        keys = ((x - start) / w).astype(np.int64)
+        firsts = np.r_[True, np.diff(keys) != 0]
+        vals = np.maximum.reduceat(y, np.flatnonzero(firsts))
+        xc = np.minimum(start + keys[firsts] * w + w * 0.5, float(x[-1]))
+        return xc, vals
+
+    def _refresh_canvas(self) -> None:
+        """Redraw both curves from the stored layers (band-aggregated)."""
+        for key, layer in self.layers.items():
+            spec = layer.get("spec")
+            if spec is None:
+                continue
+            x, y = self._layer_series(layer)
+            xc, yc = self._band_series(x, y, self._band_hz)
+            if not xc.size:
+                continue
+            curve = self.curve_fon if key == "fon" else self.curve_signal
+            curve.setData(xc, yc)
+        self._update_limits()
+
+    def _update_limits(self) -> None:
+        """Pin the view to the measured span — no panning/zooming outside.
+
+        The viewbox limits are exactly the data bounds (Y is padded 5%),
+        so a wheel zoom or a drag can only move inside our frequencies.
+        The initial full-span range is set once, when first data arrives;
+        later updates only tighten the limits and keep the user's zoom.
+        """
+        xs: list[float] = []
+        y_lo: list[float] = []
+        y_hi: list[float] = []
+        for layer in self.layers.values():
+            if layer.get("spec") is None:
+                continue
+            x, y = self._layer_series(layer)
+            if not x.size:
+                continue
+            xs += [float(x[0]), float(x[-1])]
+            y_lo.append(float(y.min()))
+            y_hi.append(float(y.max()))
+        if not xs:
+            x0, x1 = FMIN, self._fmax
+            self.pl_spec.setLimits(xMin=x0, xMax=x1)
+            self.pl_spec.setXRange(x0, x1, padding=0)
+            return
+        x0, x1 = min(xs), max(xs)
+        y0, y1 = min(y_lo), max(y_hi)
+        pad = (y1 - y0) * 0.05 if y1 > y0 else abs(y1 or y0) * 0.05 + 1.0
+        self.pl_spec.setLimits(xMin=x0, xMax=x1, yMin=y0 - pad, yMax=y1 + pad)
+        if not self._view_started:
+            self.pl_spec.setXRange(x0, x1, padding=0)
+            self._view_started = True
 
     @Slot(str)
     def on_state(self, txt: str) -> None:
@@ -534,6 +676,9 @@ class MainWindow(QMainWindow):
         """kind: "" | "sim" | "d2xx" | "files"."""
         self._conn_kind = kind
         self._fmax = FILE_FMAX if kind == "files" else FMAX
+        self._view_started = False
+        self.pl_spec.setLabel("left", "Уровень, В" if kind == "files"
+                              else "Уровень, дБ", color=COL_CANVAS_AXIS)
         self._apply_canvas_range()
         self.stack.setCurrentIndex(self.MODE_SKM)
         if self._mode_group.button(self.MODE_SKM) is not None:
@@ -548,28 +693,27 @@ class MainWindow(QMainWindow):
                                          4000)
             return
         if res.pairs is not None:               # file mode: both layers
-            self._store_layer("fon", res.pairs.get("noise"))
-            self._store_layer("signal", res.pairs.get("signal_noise"))
+            self._store_layer("fon", res.pairs.get("noise"), volts=True)
+            self._store_layer("signal", res.pairs.get("signal_noise"),
+                              volts=True)
         elif res.spec is not None:
             self._store_layer(self._selected, res.spec)
         self._refresh_info()
         self.statusBar().showMessage("", 10)
 
-    def _store_layer(self, key: str, spec) -> None:
+    def _store_layer(self, key: str, spec, volts: bool = False) -> None:
         if spec is None:
             return
-        x, y = spec.freqs, spec.db
-        mask = (x >= FMIN) & (x <= self._fmax)
-        xm, ym = x[mask], y[mask]
-        if not xm.size:
-            return
-        i = int(np.argmax(ym))
         layer = self.layers[key]
-        layer["freq"] = float(xm[i])
-        layer["level"] = float(ym[i])
-        curve = self.curve_fon if key == "fon" else self.curve_signal
-        curve.setData(xm, ym)
-        self._apply_canvas_range()      # keep the fixed span (no autorange)
+        layer["spec"] = spec
+        layer["volts"] = volts
+        x, y = self._level_series(layer)
+        if not x.size:
+            return
+        i = int(np.argmax(y))
+        layer["freq"] = float(x[i])
+        layer["level"] = float(y[i])
+        self._refresh_canvas()
 
     def _on_color(self, key: str) -> None:
         if self._selected == key:
@@ -668,7 +812,8 @@ class MainWindow(QMainWindow):
             parts.append(f"[{label}]")
             parts.append(f"Пик: {_rd(layer['freq'], 1)} Гц; "
                          f"уровень: {_rd(layer['level'], 1)} дБ")
-            parts.append("ЧАСТОТА, Гц;УРОВЕНЬ, дБ")
+            unit = "В" if layer.get("volts") else "дБ"
+            parts.append(f"ЧАСТОТА, Гц;УРОВЕНЬ, {unit}")
             rows = "\n".join(f"{_rd(a, 1)};{_rd(b, 1)}"
                              for a, b in zip(x, y, strict=True))
             parts.append(rows)
@@ -681,11 +826,14 @@ class MainWindow(QMainWindow):
         return "saved"
 
     def _series(self, key: str):
-        curve = self.curve_fon if key == "fon" else self.curve_signal
-        data = curve.getData()
-        if data is None or len(data) != 2 or data[0] is None:
+        layer = self.layers[key]
+        if layer.get("spec") is None:
             return (), ()
-        x, y = data
+        x, y = self._layer_series(layer)
+        if not x.size:
+            return (), ()
+        if self._band_hz > 1:
+            x, y = self._band_series(x, y, self._band_hz)
         return x, y
 
     def export_txt(self) -> None:

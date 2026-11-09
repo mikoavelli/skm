@@ -74,7 +74,14 @@ class D2XXTransport:
 
     def _ft(self):
         if self._dll is None:
-            self._dll = ctypes.WinDLL("ftd2xx.dll")
+            loader = getattr(ctypes, "WinDLL", None)
+            if loader is None:
+                # The ftd2xx driver shipped with the product is Windows-only;
+                # fail with a clear wording instead of an attribute crash.
+                raise OSError("D2XX-транспорт доступен только в Windows "
+                              "(ftd2xx.dll); используйте источник "
+                              "«СИМУЛЯТОР СКМ-23» или «ФАЙЛЫ (ТЕСТ-ДАННЫЕ)»")
+            self._dll = loader("ftd2xx.dll")
         return self._dll
 
     def list_devices(self) -> list[tuple[str, str, str]]:
