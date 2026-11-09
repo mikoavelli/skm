@@ -35,24 +35,25 @@ jobs:
       - name: Restore build dependencies
         run: uv sync --group build
 
-      - name: Build the bundle (onedir)
+      - name: Build the bundle (onefile)
         run: uv run --group build pyinstaller SKM.spec --noconfirm
-        env:
-          SKM_ONEDIR: "1"
 
-      # The deployable folder: SKM.exe + _internal + settings.json
-      # (tone generator), test_data/ (test spectra for the FILES source)
-      # and the 64-bit FTDI D2XX dll as ftd2xx.dll (ctypes loads it by
-      # that name from the application directory).
+      # The deployable folder: the single SKM.exe plus the data it reads
+      # next to the executable — settings.json (tone generator),
+      # test_data/ (test spectra for the FILES source) and the 64-bit
+      # FTDI D2XX dll as ftd2xx.dll (ctypes loads it by that name from
+      # the application directory).
       - name: Assemble the distribution folder
         shell: pwsh
         run: |
-          Copy-Item vendor/settings.json dist/SKM/settings.json
-          New-Item -ItemType Directory -Force dist/SKM/test_data | Out-Null
-          Copy-Item vendor/test_data/*.txt dist/SKM/test_data/
-          Copy-Item vendor/ftd2xx64.dll dist/SKM/ftd2xx.dll
+          New-Item -ItemType Directory -Force payload/SKM | Out-Null
+          Copy-Item dist/SKM.exe payload/SKM/SKM.exe
+          Copy-Item vendor/settings.json payload/SKM/settings.json
+          New-Item -ItemType Directory -Force payload/SKM/test_data | Out-Null
+          Copy-Item vendor/test_data/*.txt payload/SKM/test_data/
+          Copy-Item vendor/ftd2xx64.dll payload/SKM/ftd2xx.dll
           Remove-Item SKM-windows.zip -ErrorAction SilentlyContinue
-          Compress-Archive -Path dist/SKM/* -DestinationPath SKM-windows.zip
+          Compress-Archive -Path payload/SKM -DestinationPath SKM-windows.zip
 
       # The artifact uploads the folder itself (GitHub compresses once),
       # so the downloaded artifact is a single-level zip with the
@@ -61,7 +62,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SKM-windows
-          path: dist/SKM
+          path: payload/SKM
 
       - name: Attach the archive to the release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/')
